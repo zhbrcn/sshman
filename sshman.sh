@@ -91,58 +91,102 @@ _format_auth_methods() {
     esac
 }
 
-_show_status() {
-    local root_login password_login pubkey_login kbd_auth pam_on challenge_on authm
-    root_login=$(_get_directive PermitRootLogin 未设置)
-    password_login=$(_get_directive PasswordAuthentication 未设置)
-    pubkey_login=$(_get_directive PubkeyAuthentication 未设置)
-    kbd_auth=$(_get_directive KbdInteractiveAuthentication 未设置)
-    pam_on=$(_get_directive UsePAM 未设置)
-    challenge_on=$(_get_directive ChallengeResponseAuthentication 未设置)
-    authm=$(_get_directive AuthenticationMethods 默认)
-
-    echo "================ 当前 SSH 状态 ================"
-    echo "系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
-    echo "服务: $SSH_SERVICE"
+_read_choice() {
+    local prompt="$1"
+    local key
+    read -rsn1 -p "$prompt (Esc/0 返回): " key
     echo
-    _format_root_login "$root_login"
-    echo "密码登录: $(_format_on_off "$password_login")"
-    echo "公钥登录: $(_format_on_off "$pubkey_login")"
-    echo "键盘交互: $(_format_on_off "$kbd_auth")"
-    echo "PAM: $(_format_on_off "$pam_on")"
-    echo "挑战响应: $(_format_on_off "$challenge_on")"
-    _format_auth_methods "$authm"
-    echo
-    if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        if grep -q "^@include common-auth" "$PAM_SSHD"; then
-            echo "YubiKey 登录: YubiKey + 密码 (双因子)"
-        else
-            echo "YubiKey 登录: 仅 YubiKey OTP"
-        fi
-        if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
-            echo "授权列表 ($AUTHORIZED_YUBIKEYS):"
-            nl -ba "$AUTHORIZED_YUBIKEYS"
-        else
-            echo "授权文件缺失"
-        fi
-    else
-        echo "YubiKey 登录: 未启用"
+    if [[ "$key" == $'\e' || "$key" == "0" ]]; then
+        return 1
     fi
-    echo
-    if [ -f "$AUTHORIZED_KEYS" ]; then
-        echo "authorized_keys 列表:"
-        nl -ba "$AUTHORIZED_KEYS"
+    echo "$key"
+}
+
+_status_colors() {
+    GREEN="\033[1;32m"; RED="\033[1;31m"; BLUE="\033[1;34m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
+}
+
+_status_root_login() {
+    local raw=$(_get_directive PermitRootLogin 未设置)
+    case $raw in
+        yes) echo "允许" ;;
+        prohibit-password) echo "仅密钥" ;;
+        no) echo "禁止" ;;
+        *) echo "未设置" ;;
+    esac
+}
+
+_status_password_login() { _format_on_off "$(_get_directive PasswordAuthentication 未设置)"; }
+_status_pubkey_login() { _format_on_off "$(_get_directive PubkeyAuthentication 未设置)"; }
+
+_status_auth_methods() {
+    local authm=$(_get_directive AuthenticationMethods 默认)
+    if [ "$authm" = "默认" ]; then
+        echo "默认"
+    elif [ "$authm" = "keyboard-interactive" ]; then
+        echo "键盘交互"
     else
-        echo "authorized_keys: 尚未创建"
+        echo "$authm"
+    fi
+}
+
+_status_yubikey_mode() {
+    if ! grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
+        echo "未启用"
+        return
+    fi
+    if grep -q "^@include common-auth" "$PAM_SSHD"; then
+        echo "YubiKey + 密码"
+    else
+        echo "仅 YubiKey"
+    fi
+}
+
+_authorized_keys_label() {
+    if [ -f "$AUTHORIZED_KEYS" ]; then
+        local count
+        count=$(wc -l < "$AUTHORIZED_KEYS")
+        echo "已存在 (${count} 条)"
+    else
+        echo "未创建"
     fi
     echo "=============================================="
 }
 
+_render_menu() {
+    _status_colors
+    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_toggle
+    root_status=$(_status_root_login)
+    password_status=$(_status_password_login)
+    pubkey_status=$(_status_pubkey_login)
+    authm_status=$(_status_auth_methods)
+    yubi_mode=$(_status_yubikey_mode)
+    auth_file_status=$(_authorized_keys_label)
+    yubi_toggle=$([ "$yubi_mode" = "未启用" ] && echo "已禁用" || echo "进行中")
+
+    clear
+    echo -e "${BLUE}┌────────────────────── SSH 登录管理 ──────────────────────┐${RESET}"
+    printf "${BLUE}│${RESET} %-54s ${BLUE}│${RESET}\n" "系统: $(lsb_release -ds 2>/dev/null || echo Linux)  服务: $SSH_SERVICE"
+    echo -e "${BLUE}├───────────────────────────────────────────────────────────┤${RESET}"
+    printf "${BLUE}│${RESET} 1) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
+    printf "${BLUE}│${RESET} 2) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
+    printf "${BLUE}│${RESET} 3) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
+    printf "${BLUE}│${RESET} 4) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "管理 authorized_keys" "$auth_file_status"
+    printf "${BLUE}│${RESET} 5) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey 登录" "$yubi_toggle"
+    printf "${BLUE}│${RESET} 6) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey 模式" "$yubi_mode"
+    printf "${BLUE}│${RESET} 7) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "套用预设配置" "$authm_status"
+    echo -e "${BLUE}├───────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${BLUE}│${RESET} 0) 退出                                               ${BLUE}│${RESET}"
+    echo -e "${BLUE}└───────────────────────────────────────────────────────────┘${RESET}"
+    echo -n "请选择操作: "
+}
+
 _set_root_login() {
-    echo "1) 允许 root 登录 (yes)"
-    echo "2) 禁止 root 密码登录，但允许密钥 (prohibit-password)"
-    echo "3) 禁止 root 登录 (no)"
-    read -rp "请选择: " a
+    echo "1) 允许 root 登录"
+    echo "2) 仅允许 root 密钥"
+    echo "3) 禁止 root 登录"
+    local a
+    a=$(_read_choice "请选择") || return
 
     _backup_file "$SSH_CONFIG"
     case $a in
@@ -157,7 +201,8 @@ _set_root_login() {
 _set_password_login() {
     echo "1) 启用密码登录"
     echo "2) 禁用密码登录"
-    read -rp "请选择: " a
+    local a
+    a=$(_read_choice "请选择") || return
 
     _backup_file "$SSH_CONFIG"
     if [ "$a" = "1" ]; then
@@ -171,7 +216,8 @@ _set_password_login() {
 _set_pubkey_login() {
     echo "1) 启用公钥登录"
     echo "2) 禁用公钥登录"
-    read -rp "请选择: " a
+    local a
+    a=$(_read_choice "请选择") || return
 
     _backup_file "$SSH_CONFIG"
     if [ "$a" = "1" ]; then
@@ -190,7 +236,8 @@ _manage_keys() {
     echo "2) 粘贴公钥"
     echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
     echo "4) 删除指定行的公钥"
-    read -rp "请选择: " a
+    local a
+    a=$(_read_choice "请选择") || return
 
     case $a in
         1)
@@ -285,7 +332,8 @@ _choose_yubikey_mode() {
     echo "1) 仅 YubiKey OTP (关闭密码)"
     echo "2) YubiKey + 密码 (双因子)"
     echo "0) 取消"
-    read -rp "请选择: " m
+    local m
+    m=$(_read_choice "请选择") || return
 
     case $m in
         1) _enable_yubikey_mode otp ;;
@@ -324,7 +372,8 @@ _apply_preset() {
     echo "3) 玩具环境：root + 密码全部开启"
     echo "4) 仅 YubiKey OTP（禁密码/公钥）"
     echo "5) YubiKey + 密码（双因子，保留公钥）"
-    read -rp "请选择预设: " p
+    local p
+    p=$(_read_choice "请选择预设") || return
 
     case $p in
         1)
@@ -364,26 +413,16 @@ _apply_preset() {
 }
 
 while true; do
-    _show_status
-    echo "----------- 操作菜单 -----------"
-    echo "1) 设置 root 登录方式"
-    echo "2) 启用/禁用密码登录"
-    echo "3) 启用/禁用公钥登录"
-    echo "4) 管理 authorized_keys (自动写入我的密钥)"
-    echo "5) 配置 YubiKey 登录模式"
-    echo "6) 禁用 YubiKey 登录"
-    echo "7) 套用预设配置"
-    echo "0) 退出"
-    echo "--------------------------------"
-    read -rp "请选择操作: " c
-
+    _render_menu
+    read -rsn1 c
+    echo
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
         3) _set_pubkey_login ;;
         4) _manage_keys ;;
-        5) _choose_yubikey_mode ;;
-        6) _disable_yubikey ;;
+        5) _disable_yubikey ;;
+        6) _choose_yubikey_mode ;;
         7) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选择" ;;
