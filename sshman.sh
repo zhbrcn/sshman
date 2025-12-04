@@ -1,19 +1,22 @@
 #!/bin/bash
 # ==========================================
-# sshman - SSH Login Management Script
+# sshman - SSH 登录管理脚本
 # Author: zhbrcn + ChatGPT
-# Version: 0.1
+# Version: 0.2
 # ==========================================
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
+AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
+# 固定 YubiKey 公共 ID（不再动态注册）
+HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
 
 mkdir -p "$BACKUP_DIR"
 
-# Detect ssh service name
-detect_ssh_service() {
+# 自动检测 ssh/sshd 服务名
+_detect_ssh_service() {
     if systemctl list-unit-files | grep -q "^ssh.service"; then
         echo "ssh"
     else
@@ -21,218 +24,236 @@ detect_ssh_service() {
     fi
 }
 
-SSH_SERVICE=$(detect_ssh_service)
+SSH_SERVICE=$(_detect_ssh_service)
 
-# Backup function
-backup_file() {
+_backup_file() {
     local file=$1
     local name=$(basename "$file")
     cp "$file" "$BACKUP_DIR/${name}.bak.$(date +%F-%H%M%S)"
 }
 
-# Restart SSH safely
-restart_ssh() {
-    echo "[*] Restarting SSH service..."
-    systemctl restart "$SSH_SERVICE"
-    if [ $? -eq 0 ]; then
-        echo "[✓] SSH restarted successfully"
+_restart_ssh() {
+    echo "[*] 正在重启 SSH 服务..."
+    if systemctl restart "$SSH_SERVICE"; then
+        echo "[✓] SSH 重启成功"
     else
-        echo "[!] SSH restart FAILED — please check manually!"
+        echo "[!] SSH 重启失败，请手动检查！"
     fi
 }
 
-# ---------------------------------------------------------
-# Show current SSH status
-# ---------------------------------------------------------
-show_status() {
-    echo "=============================="
-    echo " SSH Configuration Overview"
-    echo "=============================="
+_update_directive() {
+    local key=$1
+    local value=$2
+    if grep -q "^${key}" "$SSH_CONFIG"; then
+        sed -i "s/^${key}.*/${key} ${value}/" "$SSH_CONFIG"
+    else
+        echo "${key} ${value}" >> "$SSH_CONFIG"
+    fi
+}
 
-    echo "- System: $(lsb_release -ds 2>/dev/null || echo Linux)"
-    echo "- SSH service: $SSH_SERVICE"
+_show_status() {
+    echo "================ 当前 SSH 状态 ================"
+    echo "- 系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
+    echo "- SSH 服务名: $SSH_SERVICE"
     echo
-
-    echo "[SSH Config]"
+    echo "[sshd_config]"
     grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication)" "$SSH_CONFIG" 2>/dev/null
-
     echo
     echo "[PAM YubiKey]"
-    if grep -q "pam_u2f.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "PAM YubiKey: ENABLED"
+    if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
+        echo "YubiKey (OTP) 认证: 已启用"
+        if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
+            echo "授权文件: $AUTHORIZED_YUBIKEYS"
+            nl -ba "$AUTHORIZED_YUBIKEYS"
+        else
+            echo "未找到授权文件"
+        fi
     else
-        echo "PAM YubiKey: disabled"
+        echo "YubiKey (OTP) 认证: 未启用"
     fi
-
     echo
-    echo "[Authorized Keys]"
+    echo "[authorized_keys]"
     if [ -f "$AUTHORIZED_KEYS" ]; then
         nl -ba "$AUTHORIZED_KEYS"
     else
-        echo "No authorized_keys found."
+        echo "尚未创建 authorized_keys"
     fi
+    echo "=============================================="
 }
 
-# ---------------------------------------------------------
-# Modify SSH settings
-# ---------------------------------------------------------
-set_root_login() {
-    echo "1) PermitRootLogin yes"
-    echo "2) PermitRootLogin prohibit-password"
-    echo "3) PermitRootLogin no"
-    read -p "Select an option: " a
+_set_root_login() {
+    echo "1) 允许 root 登录 (yes)"
+    echo "2) 禁止 root 密码登录，但允许密钥 (prohibit-password)"
+    echo "3) 禁止 root 登录 (no)"
+    read -rp "请选择: " a
 
-    backup_file "$SSH_CONFIG"
-
+    _backup_file "$SSH_CONFIG"
     case $a in
-        1) sed -i "s/^PermitRootLogin.*/PermitRootLogin yes/; /PermitRootLogin/! s/$/\nPermitRootLogin yes/" "$SSH_CONFIG" ;;
-        2) sed -i "s/^PermitRootLogin.*/PermitRootLogin prohibit-password/; /PermitRootLogin/! s/$/\nPermitRootLogin prohibit-password/" "$SSH_CONFIG" ;;
-        3) sed -i "s/^PermitRootLogin.*/PermitRootLogin no/; /PermitRootLogin/! s/$/\nPermitRootLogin no/" "$SSH_CONFIG" ;;
-        *) echo "Invalid option" ;;
+        1) _update_directive "PermitRootLogin" "yes" ;;
+        2) _update_directive "PermitRootLogin" "prohibit-password" ;;
+        3) _update_directive "PermitRootLogin" "no" ;;
+        *) echo "无效选择" ; return ;;
     esac
-
-    restart_ssh
+    _restart_ssh
 }
 
-set_password_login() {
-    echo "1) Enable password login"
-    echo "2) Disable password login"
-    read -p "Choose: " a
+_set_password_login() {
+    echo "1) 启用密码登录"
+    echo "2) 禁用密码登录"
+    read -rp "请选择: " a
 
-    backup_file "$SSH_CONFIG"
-    if [ "$a" -eq 1 ]; then
-        sed -i "s/^PasswordAuthentication.*/PasswordAuthentication yes/; /PasswordAuthentication/! s/$/\nPasswordAuthentication yes/" "$SSH_CONFIG"
+    _backup_file "$SSH_CONFIG"
+    if [ "$a" = "1" ]; then
+        _update_directive "PasswordAuthentication" "yes"
     else
-        sed -i "s/^PasswordAuthentication.*/PasswordAuthentication no/; /PasswordAuthentication/! s/$/\nPasswordAuthentication no/" "$SSH_CONFIG"
+        _update_directive "PasswordAuthentication" "no"
     fi
-
-    restart_ssh
+    _restart_ssh
 }
 
-set_pubkey_login() {
-    echo "1) Enable pubkey login"
-    echo "2) Disable pubkey login"
-    read -p "Choose: " a
+_set_pubkey_login() {
+    echo "1) 启用公钥登录"
+    echo "2) 禁用公钥登录"
+    read -rp "请选择: " a
 
-    backup_file "$SSH_CONFIG"
-    if [ "$a" -eq 1 ]; then
-        sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication yes/; /PubkeyAuthentication/! s/$/\nPubkeyAuthentication yes/" "$SSH_CONFIG"
+    _backup_file "$SSH_CONFIG"
+    if [ "$a" = "1" ]; then
+        _update_directive "PubkeyAuthentication" "yes"
     else
-        sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication no/; /PubkeyAuthentication/! s/$/\nPubkeyAuthentication no/" "$SSH_CONFIG"
+        _update_directive "PubkeyAuthentication" "no"
     fi
-    restart_ssh
+    _restart_ssh
 }
 
-# ---------------------------------------------------------
-# Authorized keys management
-# ---------------------------------------------------------
-manage_keys() {
-    echo "1) View keys"
-    echo "2) Add key"
-    echo "3) Remove key"
-    read -p "Choose: " a
+_manage_keys() {
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+
+    echo "1) 查看密钥"
+    echo "2) 粘贴公钥"
+    echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
+    echo "4) 删除指定行的公钥"
+    read -rp "请选择: " a
 
     case $a in
-        1) nl -ba "$AUTHORIZED_KEYS" ;;
+        1)
+            if [ -f "$AUTHORIZED_KEYS" ]; then
+                nl -ba "$AUTHORIZED_KEYS"
+            else
+                echo "尚未创建 authorized_keys"
+            fi
+            ;;
         2)
-            read -p "Paste public key: " key
-            mkdir -p ~/.ssh
-            chmod 700 ~/.ssh
+            read -rp "请粘贴公钥: " key
             echo "$key" >> "$AUTHORIZED_KEYS"
             chmod 600 "$AUTHORIZED_KEYS"
-            echo "[✓] Key added."
+            echo "[✓] 公钥已添加"
             ;;
         3)
-            nl -ba "$AUTHORIZED_KEYS"
-            read -p "Select line number to delete: " line
-            sed -i "${line}d" "$AUTHORIZED_KEYS"
-            echo "[✓] Key removed."
+            read -rp "请输入公钥文件路径(默认: $HOME/.ssh/id_rsa.pub): " path
+            path=${path:-$HOME/.ssh/id_rsa.pub}
+            if [ -f "$path" ]; then
+                cat "$path" >> "$AUTHORIZED_KEYS"
+                chmod 600 "$AUTHORIZED_KEYS"
+                echo "[✓] 已导入 $path"
+            else
+                echo "未找到文件: $path"
+            fi
             ;;
-        *) echo "Invalid option" ;;
+        4)
+            if [ ! -f "$AUTHORIZED_KEYS" ]; then
+                echo "尚未创建 authorized_keys"; return
+            fi
+            nl -ba "$AUTHORIZED_KEYS"
+            read -rp "输入要删除的行号: " line
+            sed -i "${line}d" "$AUTHORIZED_KEYS"
+            echo "[✓] 已删除第 $line 行"
+            ;;
+        *) echo "无效选择" ;;
     esac
 }
 
-# ---------------------------------------------------------
-# YubiKey PAM control
-# ---------------------------------------------------------
-disable_yubikey() {
-    backup_file "$PAM_SSHD"
-    sed -i "/pam_u2f.so/d" "$PAM_SSHD"
-    echo "[✓] YubiKey PAM disabled."
-    restart_ssh
+_disable_yubikey() {
+    _backup_file "$PAM_SSHD"
+    sed -i "/pam_yubico.so/d" "$PAM_SSHD"
+    echo "[✓] 已禁用 YubiKey 登录"
+    _restart_ssh
 }
 
-enable_yubikey() {
-    backup_file "$PAM_SSHD"
-    echo "auth required pam_u2f.so cue" >> "$PAM_SSHD"
-    echo "[✓] YubiKey PAM enabled (basic mode)."
-    restart_ssh
+_enable_yubikey() {
+    _backup_file "$AUTHORIZED_YUBIKEYS"
+    printf "%s\n" "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
+    chmod 600 "$AUTHORIZED_YUBIKEYS"
+
+    _backup_file "$PAM_SSHD"
+    if grep -q "pam_yubico.so" "$PAM_SSHD"; then
+        sed -i "s#pam_yubico.so.*#auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless#" "$PAM_SSHD"
+    else
+        echo "auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" >> "$PAM_SSHD"
+    fi
+
+    _update_directive "ChallengeResponseAuthentication" "yes"
+    echo "[✓] 已启用固定的 YubiKey OTP 登录 (2 把设备)"
+    _restart_ssh
 }
 
-# ---------------------------------------------------------
-# Presets
-# ---------------------------------------------------------
-apply_preset() {
-    echo "1) secure-prod"
-    echo "2) personal-dev"
-    echo "3) toy-box"
-    read -p "Choose preset: " p
+_apply_preset() {
+    echo "1) 安全生产：禁止 root 登录，禁止密码，仅公钥"
+    echo "2) 日常开发：允许 root 密钥，允许密码"
+    echo "3) 玩具环境：root + 密码全部开启"
+    read -rp "请选择预设: " p
 
-    backup_file "$SSH_CONFIG"
-    backup_file "$PAM_SSHD"
+    _backup_file "$SSH_CONFIG"
+    _backup_file "$PAM_SSHD"
 
     case $p in
         1)
-            sed -i "s/^PermitRootLogin.*/PermitRootLogin no/" "$SSH_CONFIG"
-            sed -i "s/^PasswordAuthentication.*/PasswordAuthentication no/" "$SSH_CONFIG"
-            sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication yes/" "$SSH_CONFIG"
-            disable_yubikey
+            _update_directive "PermitRootLogin" "no"
+            _update_directive "PasswordAuthentication" "no"
+            _update_directive "PubkeyAuthentication" "yes"
+            _disable_yubikey
             ;;
         2)
-            sed -i "s/^PermitRootLogin.*/PermitRootLogin prohibit-password/" "$SSH_CONFIG"
-            sed -i "s/^PasswordAuthentication.*/PasswordAuthentication yes/" "$SSH_CONFIG"
-            sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication yes/" "$SSH_CONFIG"
-            disable_yubikey
+            _update_directive "PermitRootLogin" "prohibit-password"
+            _update_directive "PasswordAuthentication" "yes"
+            _update_directive "PubkeyAuthentication" "yes"
+            _disable_yubikey
             ;;
         3)
-            sed -i "s/^PermitRootLogin.*/PermitRootLogin yes/" "$SSH_CONFIG"
-            sed -i "s/^PasswordAuthentication.*/PasswordAuthentication yes/" "$SSH_CONFIG"
-            sed -i "s/^PubkeyAuthentication.*/PubkeyAuthentication yes/" "$SSH_CONFIG"
+            _update_directive "PermitRootLogin" "yes"
+            _update_directive "PasswordAuthentication" "yes"
+            _update_directive "PubkeyAuthentication" "yes"
             ;;
-        *) echo "Invalid preset" ;;
+        *) echo "无效预设" ; return ;;
     esac
-
-    restart_ssh
+    _restart_ssh
 }
 
-# ---------------------------------------------------------
-# Main menu
-# ---------------------------------------------------------
 while true; do
-    echo
-    echo "========== sshman =========="
-    echo "1) Show current SSH status"
-    echo "2) Set root login options"
-    echo "3) Enable/disable password login"
-    echo "4) Enable/disable pubkey login"
-    echo "5) Manage authorized_keys"
-    echo "6) Enable YubiKey login"
-    echo "7) Disable YubiKey login"
-    echo "8) Apply preset config"
-    echo "0) Exit"
-    echo "============================"
-    read -p "Choose an option: " c
+    _show_status
+    echo "----------- 操作菜单 -----------"
+    echo "1) 设置 root 登录方式"
+    echo "2) 启用/禁用密码登录"
+    echo "3) 启用/禁用公钥登录"
+    echo "4) 管理 authorized_keys (自动写入我的密钥)"
+    echo "5) 启用固定的两把 YubiKey 登录"
+    echo "6) 禁用 YubiKey 登录"
+    echo "7) 套用预设配置"
+    echo "0) 退出"
+    echo "--------------------------------"
+    read -rp "请选择操作: " c
 
     case $c in
-        1) show_status ;;
-        2) set_root_login ;;
-        3) set_password_login ;;
-        4) set_pubkey_login ;;
-        5) manage_keys ;;
-        6) enable_yubikey ;;
-        7) disable_yubikey ;;
-        8) apply_preset ;;
+        1) _set_root_login ;;
+        2) _set_password_login ;;
+        3) _set_pubkey_login ;;
+        4) _manage_keys ;;
+        5) _enable_yubikey ;;
+        6) _disable_yubikey ;;
+        7) _apply_preset ;;
         0) exit 0 ;;
-        *) echo "Invalid choice" ;;
+        *) echo "无效选择" ;;
     esac
+    echo
+    read -rp "按回车继续..." _
 done
