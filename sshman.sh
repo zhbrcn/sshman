@@ -92,24 +92,38 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" key char
-    # 清空可能遗留的输入缓冲，避免上级菜单的换行影响本次读取
-    while read -rsn1 -t 0.001 char; do :; done
-    printf "%s (Esc/0 返回): " "$prompt" >&2
-    # 先读入首个按键以处理 Esc/0 快速返回
+    local prompt="$1" back_hint="$2" key char rest
+    while IFS= read -rsn1 -t 0.001 char; do :; done
+
+    local hint_suffix=""
+    [ -n "$back_hint" ] && hint_suffix=" (${back_hint})"
+    printf "%s%s: " "$prompt" "$hint_suffix" >&2
+
     IFS= read -rsn1 key || return 1
-    # 如果是 Esc 或 0，直接返回上级
-    if [[ "$key" == $'\e' || "$key" == "0" ]]; then
+
+    if [[ "$key" == $'\e' ]]; then
         echo >&2
         return 1
     fi
-    # 继续吞掉本行剩余输入直到换行或超时，便于处理多位数字
-    while read -rsn1 -t 0.05 char; do
+
+    if [[ "$key" == "0" && -n "$back_hint" ]]; then
+        echo >&2
+        return 1
+    fi
+
+    if [[ "$key" == $'\n' || -z "$key" ]]; then
+        echo >&2
+        return 1
+    fi
+
+    rest=""
+    while IFS= read -rsn1 -t 0.05 char; do
         [[ "$char" == $'\n' ]] && break
-        key+="$char"
+        rest+="$char"
     done
+
     echo >&2
-    [[ -n "$key" ]] && echo "$key"
+    echo "${key}${rest}"
 }
 
 _status_colors() {
@@ -176,20 +190,24 @@ _render_menu() {
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     clear
-    local border="┌───────────────────────── SSH 登录管理 ─────────────────────────┐"
-    echo -e "${BLUE}${border}${RESET}"
-    printf "${BLUE}│${RESET} %-64s ${BLUE}│${RESET}\n" "$sys_info"
-    echo -e "${BLUE}├───────────────────────────────────────────────────────────────┤${RESET}"
-    printf "${BLUE}│${RESET} 1) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
-    printf "${BLUE}│${RESET} 2) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
-    printf "${BLUE}│${RESET} 3) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
-    printf "${BLUE}│${RESET} 4) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "authorized_keys" "$auth_file_status"
-    printf "${BLUE}│${RESET} 5) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey" "$yubi_toggle"
-    printf "${BLUE}│${RESET} 6) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey" "$yubi_mode"
-    printf "${BLUE}│${RESET} 7) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "套用预设" "$authm_status"
-    echo -e "${BLUE}├───────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${BLUE}│${RESET} 0) 退出                                                 ${BLUE}│${RESET}"
-    echo -e "${BLUE}└───────────────────────────────────────────────────────────────┘${RESET}"
+    local inner=67
+    local top=$(printf '┌%*s┐' "$inner" "" | tr ' ' '─')
+    local mid=$(printf '├%*s┤' "$inner" "" | tr ' ' '─')
+    local bot=$(printf '└%*s┘' "$inner" "" | tr ' ' '─')
+
+    echo -e "${BLUE}${top}${RESET}"
+    printf "${BLUE}│${RESET} %-*s ${BLUE}│${RESET}\n" "$inner" "$sys_info"
+    echo -e "${BLUE}${mid}${RESET}"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "1) root 登录" "$root_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "2) 密码登录" "$password_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "3) 公钥登录" "$pubkey_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "4) authorized_keys" "$auth_file_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "5) 禁用 YubiKey" "$yubi_toggle"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "6) 配置 YubiKey" "$yubi_mode"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "7) 套用预设" "$authm_status"
+    echo -e "${BLUE}${mid}${RESET}"
+    printf "${BLUE}│${RESET} %-18s %-45s ${BLUE}│${RESET}\n" "0) 退出" ""
+    echo -e "${BLUE}${bot}${RESET}"
     echo -n "请选择操作: "
 }
 
@@ -198,7 +216,7 @@ _set_root_login() {
     echo "2) 仅允许 root 密钥"
     echo "3) 禁止 root 登录"
     local a
-    a=$(_read_choice "请选择") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
     case $a in
@@ -214,7 +232,7 @@ _set_password_login() {
     echo "1) 启用密码登录"
     echo "2) 禁用密码登录"
     local a
-    a=$(_read_choice "请选择") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
     if [ "$a" = "1" ]; then
@@ -229,7 +247,7 @@ _set_pubkey_login() {
     echo "1) 启用公钥登录"
     echo "2) 禁用公钥登录"
     local a
-    a=$(_read_choice "请选择") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
     if [ "$a" = "1" ]; then
@@ -249,7 +267,7 @@ _manage_keys() {
     echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
     echo "4) 删除指定行的公钥"
     local a
-    a=$(_read_choice "请选择") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     case $a in
         1)
@@ -345,7 +363,7 @@ _choose_yubikey_mode() {
     echo "2) YubiKey + 密码 (双因子)"
     echo "0) 取消"
     local m
-    m=$(_read_choice "请选择") || return
+    m=$(_read_choice "请选择" "Esc/0 返回") || return
 
     case $m in
         1) _enable_yubikey_mode otp ;;
@@ -385,7 +403,7 @@ _apply_preset() {
     echo "4) 仅 YubiKey OTP（禁密码/公钥）"
     echo "5) YubiKey + 密码（双因子，保留公钥）"
     local p
-    p=$(_read_choice "请选择预设") || return
+    p=$(_read_choice "请选择预设" "Esc/0 返回") || return
 
     case $p in
         1)
@@ -426,7 +444,7 @@ _apply_preset() {
 
 while true; do
     _render_menu
-    read -r c
+    c=$(_read_choice "请选择操作" "") || { echo; continue; }
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
