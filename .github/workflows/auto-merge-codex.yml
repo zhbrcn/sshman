@@ -2,54 +2,66 @@ name: Auto-merge Codex PRs
 
 on:
   pull_request:
+    # 只针对 main 分支的目标 PR
     branches:
       - main
     types:
+      # 在 PR 打开、新提交同步、或重开时触发
       - opened
       - synchronize
       - reopened
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write # 允许 Git Push
+  pull-requests: write # 允许关闭 PR
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-
-    if: |
-      startsWith(github.head_ref, 'codex/') ||
-      contains(github.event.pull_request.title, 'codex') ||
-      github.actor == 'github-actions[bot]'
+    
+    # 确保只处理 Codex 相关的 PR
+    if: startsWith(github.head_ref, 'codex/')
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 推荐使用 v4
         with:
+          # 获取所有历史记录，以便进行备份和推送
           fetch-depth: 0
+          # 使用 GITHUB_TOKEN 作为身份验证，解决权限问题
+          token: ${{ secrets.GITHUB_TOKEN }} 
 
-      - name: Merge PR with theirs (PR 覆盖 main)
+      - name: 强制合并 PR 分支到 main (PR 覆盖 main)
         run: |
+          # 配置 Git 身份
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-
+          
+          # 1. 切换到 main 分支
           git checkout main
+          
+          # 2. 拉取 PR 分支到本地临时分支 codex-pr
           git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
-          git merge -X theirs codex-pr --no-edit || true
+          
+          # 3. 执行合并，冲突时强制使用 codex-pr 的版本 (-X theirs)
+          # 注意：此步骤如果失败（存在无法自动解决的严重冲突），Action 会失败
+          git merge codex-pr -X theirs --no-edit
 
-      - name: Create backup tag
+      - name: Create backup tag and Push
         run: |
+          # 4. 创建基于时间戳的备份 Tag
           tag="backup-$(date +'%Y%m%d-%H%M%S')"
           git tag $tag
+          
+          # 5. 推送最新的 main 分支和备份 Tag
+          git push origin main
           git push origin $tag
 
-      - name: Push updated main
-        run: git push origin main
-
-      - name: Close PR using GitHub API
+      - name: 使用 GitHub API 关闭 PR
         run: |
+          # 6. 使用 API 彻底关闭 PR (状态设为 closed)
           curl -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
             -d '{"state": "closed"}'
