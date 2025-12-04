@@ -1,0 +1,53 @@
+name: Auto-merge Codex PRs
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+
+    if: github.actor == 'github-actions[bot]' || startsWith(github.head_ref, 'codex') || contains(github.event.pull_request.title, 'Codex')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Merge PR with theirs (优先使用 PR 内容，自动覆盖 main)
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # checkout main
+          git checkout main
+
+          # fetch PR branch
+          git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
+
+          # 强制使用 PR 的内容覆盖 main（自动解决所有冲突）
+          git merge -X theirs codex-pr --no-edit || true
+
+          # push 回 main 分支
+          git push origin main
+
+      - name: Auto-approve PR
+        uses: hmarr/auto-approve-action@v3
+        with:
+          pull-request-number: ${{ github.event.pull_request.number }}
+
+      - name: Auto-merge PR
+        uses: pascalgn/automerge-action@v0.15.6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
