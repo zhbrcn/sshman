@@ -150,6 +150,7 @@ _authorized_keys_label() {
     else
         echo "未创建"
     fi
+    echo "=============================================="
 }
 
 _render_menu() {
@@ -426,4 +427,6 @@ while true; do
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
+    echo
+    read -rp "按回车继续..." _
 done
