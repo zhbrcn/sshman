@@ -388,4 +388,6 @@ while true; do
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
+    echo
+    read -rp "按回车继续..." _
 done
