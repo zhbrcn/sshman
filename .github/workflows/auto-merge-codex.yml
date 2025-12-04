@@ -1,0 +1,73 @@
+name: Auto-merge Codex PRs
+
+# 触发条件：当 PR 针对 main 分支被打开、更新（同步）、或重开时
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+# 权限设置：必须有写入内容和 PR 的权限
+permissions:
+  contents: write    # 允许 git push 和创建 tag
+  pull-requests: write # 允许使用 API 关闭 PR
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    
+    # ***** 核心解决方案 #3: 引用 Environment *****
+    # 这允许 Job 访问你在 Environment 中配置的 AUTO_MERGE_TOKEN Secret
+    environment: AUTO_MERGE_TOKEN
+    
+    # 核心判断：确保只处理以 'codex/' 开头的分支创建的 PRs
+    if: startsWith(github.head_ref, 'codex/')
+
+    steps:
+      - name: Checkout Repository using PAT
+        # 使用 actions/checkout@v4 获取代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # ***** 核心解决方案 #2: 使用 PAT 绕过 Bot 触发限制 *****
+          # 使用 PAT 代替 GITHUB_TOKEN 进行 Checkout，确保能被 Bot 触发
+          token: ${{ secrets.AUTO_MERGE_TOKEN }} 
+
+      - name: 强制合并 PR 分支到 main (PR 覆盖 main)
+        run: |
+          # 1. 配置 Git 身份
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # 2. 切换到目标分支 (main)
+          git checkout main
+          
+          # 3. 拉取 PR 分支内容到本地临时分支 codex-pr
+          git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
+          
+          # 4. ***** 核心解决方案 #1: 强制合并，Codex 版本优先 (-X theirs) *****
+          git merge codex-pr -X theirs --no-edit
+
+      - name: 创建备份 Tag 并 Push 到远端
+        run: |
+          # 5. 创建基于时间戳的备份 Tag
+          tag="backup-$(date +'%Y%m%d-%H%M%S')"
+          git tag $tag
+          
+          # 6. 推送最新的 main 分支 (使用 PAT 的权限)
+          git push origin main
+          # 7. 推送备份 Tag
+          git push origin $tag
+
+      - name: 使用 GitHub API 关闭 PR (使用 GITHUB_TOKEN)
+        # 关闭 PR 使用内置的 GITHUB_TOKEN 即可
+        run: |
+          # 8. 使用 curl 命令调用 GitHub API，将 PR 状态设为 'closed'
+          curl -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            -d '{"state": "closed"}'
