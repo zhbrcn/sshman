@@ -47,19 +47,23 @@ _update_directive() {
     fi
 }
 
+_ensure_kbdinteractive() {
+    # 确保键盘交互式认证开启，否则 YubiKey OTP 不会被 sshd 提供
+    _update_directive "KbdInteractiveAuthentication" "yes"
+}
+
 _show_status() {
     echo "================ 当前 SSH 状态 ================"
     echo "系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
     echo "服务: $SSH_SERVICE"
     echo
     echo "[sshd_config]"
-    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM)" "$SSH_CONFIG" 2>/dev/null
+    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM|KbdInteractiveAuthentication)" "$SSH_CONFIG" 2>/dev/null
     echo
     echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        local line mode
-        line=$(grep "pam_yubico.so" "$PAM_SSHD" | head -n1)
-        if echo "$line" | grep -q "try_first_pass"; then
+        local mode
+        if grep -q "^@include common-auth" "$PAM_SSHD"; then
             mode="YubiKey + 密码 (双因子)"
         else
             mode="仅 YubiKey OTP"
@@ -190,24 +194,39 @@ _write_yubikey_authfile() {
     chown root:root "$AUTHORIZED_YUBIKEYS" 2>/dev/null
 }
 
-_set_pam_yubico() {
+_write_pam_block() {
     local mode=$1
-    _backup_file "$PAM_SSHD"
-    sed -i "/pam_yubico.so/d" "$PAM_SSHD"
-    local entry="auth required pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless"
-    [ "$mode" = "pass" ] && entry+=" try_first_pass"
-    if grep -q "^@include common-auth" "$PAM_SSHD"; then
-        sed -i "/^@include common-auth/i ${entry}" "$PAM_SSHD"
-    else
-        sed -i "1i ${entry}" "$PAM_SSHD"
+    cat > "$PAM_SSHD" <<EOF
+# PAM 配置由 sshman 管理
+auth    required                        pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless
+EOF
+
+    if [ "$mode" = "pass" ]; then
+        cat >> "$PAM_SSHD" <<'EOF'
+@include common-auth
+EOF
     fi
+
+    cat >> "$PAM_SSHD" <<'EOF'
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
 }
 
 _disable_yubikey() {
     local skip_restart=$1
     _backup_file "$PAM_SSHD"
-    sed -i "/pam_yubico.so/d" "$PAM_SSHD"
-    echo "[✓] 已禁用 YubiKey 登录"
+    cat > "$PAM_SSHD" <<'EOF'
+# PAM 配置由 sshman 重置为默认
+@include common-auth
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
+    echo "[✓] 已禁用 YubiKey 登录并恢复默认 PAM"
     [ "$skip_restart" = "skip" ] || _restart_ssh
 }
 
@@ -229,10 +248,12 @@ _enable_yubikey_mode() {
     local mode=$1
     _ensure_yubico_package
     _write_yubikey_authfile
-    _set_pam_yubico "$mode"
+    _backup_file "$PAM_SSHD"
+    _write_pam_block "$mode"
 
     _update_directive "UsePAM" "yes"
     _update_directive "ChallengeResponseAuthentication" "yes"
+    _ensure_kbdinteractive
     if [ "$mode" = "otp" ]; then
         _update_directive "PasswordAuthentication" "no"
         echo "[✓] 已启用仅 YubiKey OTP 登录"
