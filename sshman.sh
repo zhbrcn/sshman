@@ -103,23 +103,51 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" line hint_suffix=""
+    local prompt="$1" back_hint="$2" hint_suffix="" first rest char
 
     while IFS= read -rsn1 -t 0.001; do :; done
 
     [ -n "$back_hint" ] && hint_suffix=" (${back_hint})"
-    read -r -p "${prompt}${hint_suffix}: " line || return 1
+    read -rsn1 -p "${prompt}${hint_suffix}: " first || return 1
 
-    if [[ -n "$back_hint" && ( "$line" == $'\e' || "$line" == "0" ) ]]; then
+    # ä½¿ç”¨ ESC ç«‹å³è¿”å›žï¼Œ0 ä¹Ÿèƒ½ç›´æŽ¥è¿”å›ž
+    if [[ "$first" == $'\e' || "$first" == "" || "$first" == $'\n' ]]; then
+        echo
         return 1
     fi
 
-    [ -z "$line" ] && return 1
-    echo "$line"
+    rest="$first"
+    while IFS= read -rsn1 -t 0.05 char; do
+        [ "$char" = $'\n' ] && break
+        rest+="$char"
+    done
+    echo
+
+    if [[ -n "$back_hint" && "$rest" == "0" ]]; then
+        return 1
+    fi
+
+    echo "$rest"
 }
 
 _status_colors() {
     GREEN="\033[1;32m"; RED="\033[1;31m"; BLUE="\033[1;34m"; YELLOW="\033[1;33m"; CYAN="\033[1;36m"; RESET="\033[0m"
+}
+
+_blue_text() {
+    _status_colors
+    printf "%b%s%b" "$BLUE" "$1" "$RESET"
+}
+
+_section_header() {
+    _status_colors
+    local title="$1" info="$2" bar
+    bar=$(printf '%*s' 60 "" | tr ' ' '-')
+    echo -e "${BLUE}${bar}${RESET}"
+    printf " %s" "$title"
+    [ -n "$info" ] && printf " - %b" "$(_blue_text "$info")"
+    echo
+    echo -e "${BLUE}${bar}${RESET}"
 }
 
 _status_root_login() {
@@ -170,38 +198,45 @@ _authorized_keys_label() {
 
 _render_menu() {
     _status_colors
-    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status sys_info
-    root_status=$(_status_root_login)
-    password_status=$(_status_password_login)
+    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status yubi_display sys_info
+    root_status=$(_blue_text "$(_status_root_login)")
+    password_status=$(_blue_text "$(_status_password_login)")
     pubkey_status=$(_status_pubkey_login)
-    authm_status=$(_status_auth_methods)
-    yubi_mode=$(_status_yubikey_mode)
     auth_file_status=$(_authorized_keys_label)
-    yubi_switch_status=$([ "$yubi_mode" = "未启用" ] && echo "当前: 已禁用" || echo "当前: 已启用")
+    pubkey_status=$(_blue_text "$pubkey_status / $auth_file_status")
+    authm_status=$(_blue_text "$(_status_auth_methods)")
+    yubi_mode=$(_status_yubikey_mode)
+    if [ "$yubi_mode" = "未启用" ]; then
+        yubi_switch_status="当前: 已禁用"
+    else
+        yubi_switch_status="当前: 已启用"
+    fi
+    yubi_display=$(_blue_text "$yubi_mode / $yubi_switch_status")
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf " %-4s %-20s %s\n" "$1" "$2" "$3"
+        printf " %-4s %-20s %b\n" "$1" "$2" "$3"
     }
 
     clear
     echo -e "${BLUE}${border}${RESET}"
     printf " sshman - SSH 登录管理 (UTF-8)\n"
-    printf " %s\n" "$sys_info"
-    echo -e "${divider}"
+    printf " %b\n" "$(_blue_text "$sys_info")"
+    echo -e "${BLUE}${divider}${RESET}"
     menu_line "1)" "root 登录" "$root_status"
     menu_line "2)" "密码登录" "$password_status"
-    menu_line "3)" "公钥登录与密钥" "$pubkey_status / $auth_file_status"
-    menu_line "4)" "YubiKey" "$yubi_mode / $yubi_switch_status"
+    menu_line "3)" "公钥登录与密钥" "$pubkey_status"
+    menu_line "4)" "YubiKey" "$yubi_display"
     menu_line "5)" "套用预设" "$authm_status"
-    echo -e "${divider}"
+    echo -e "${BLUE}${divider}${RESET}"
     echo " 0) 退出 (Esc/0 返回)"
     echo -e "${BLUE}${border}${RESET}"
 }
 
 _set_root_login() {
+    _section_header "root 登录" "当前: $(_status_root_login)"
     echo "1) 允许 root 登录"
     echo "2) 仅允许 root 密钥"
     echo "3) 禁止 root 登录"
@@ -219,6 +254,7 @@ _set_root_login() {
 }
 
 _set_password_login() {
+    _section_header "密码登录" "当前: $(_status_password_login)"
     echo "1) 启用密码登录"
     echo "2) 禁用密码登录"
     local a
@@ -234,6 +270,7 @@ _set_password_login() {
 }
 
 _set_pubkey_login() {
+    _section_header "公钥登录" "当前: $(_status_pubkey_login)"
     echo "1) 启用公钥登录"
     echo "2) 禁用公钥登录"
     local a
@@ -252,6 +289,7 @@ _manage_keys() {
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
 
+    _section_header "authorized_keys" "状态: $(_authorized_keys_label)"
     echo "1) 查看密钥"
     echo "2) 粘贴公钥"
     echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
@@ -312,6 +350,7 @@ _manage_keys() {
 
 _manage_pubkey_suite() {
     while true; do
+        _section_header "公钥登录/密钥" "登录: $(_status_pubkey_login) | 密钥: $(_authorized_keys_label)"
         echo "1) 设置公钥登录开关"
         echo "2) 管理 authorized_keys"
         echo "0) 返回"
@@ -380,6 +419,7 @@ EOF
 }
 
 _choose_yubikey_mode() {
+    _section_header "YubiKey 模式" "当前: $(_status_yubikey_mode)"
     echo "1) 仅 YubiKey OTP (关闭密码)"
     echo "2) YubiKey + 密码 (双因子)"
     echo "0) 取消"
@@ -396,6 +436,7 @@ _choose_yubikey_mode() {
 
 _manage_yubikey() {
     while true; do
+        _section_header "YubiKey 管理" "状态: $(_status_yubikey_mode)"
         echo "1) 配置/切换 YubiKey 模式"
         echo "2) 禁用/恢复 YubiKey"
         echo "0) 返回"
@@ -436,6 +477,8 @@ _enable_yubikey_mode() {
 }
 
 _apply_preset() {
+    local summary="root: $(_status_root_login) | 密码: $(_status_password_login) | 公钥: $(_status_pubkey_login) | YubiKey: $(_status_yubikey_mode)"
+    _section_header "套用预设" "$summary"
     echo "1) 安全生产：禁止 root 登录，禁止密码，仅公钥"
     echo "2) 日常开发：允许 root 密钥，允许密码"
     echo "3) 玩具环境：root + 密码全部开启"
