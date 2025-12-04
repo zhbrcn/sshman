@@ -118,9 +118,11 @@ _read_choice() {
 
     rest="$first"
     while IFS= read -rsn1 -t 0.05 char; do
-        [ "$char" = $'\n' ] && break
+        # Handle both LF and CR so terminals sending \r don't leave it in the choice
+        [[ "$char" = $'\n' || "$char" = $'\r' ]] && break
         rest+="$char"
     done
+    rest=${rest%$'\r'}  # trim stray carriage return if present
     echo
 
     if [[ -n "$back_hint" && "$rest" == "0" ]]; then
