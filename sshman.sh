@@ -1,5 +1,6 @@
 #!/bin/bash
 # sshman - SSH 登录管理脚本 (中文交互)
+# 需要在 UTF-8 终端运行，否则菜单会乱码。
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
@@ -35,6 +36,16 @@ _restart_ssh() {
         echo "[✓] SSH 重启成功"
     else
         echo "[!] SSH 重启失败，请手动检查！"
+    fi
+}
+
+_check_utf8_locale() {
+    local charmap
+    charmap=$(locale charmap 2>/dev/null || echo "")
+    if [[ "$charmap" != "UTF-8" && "$LANG" != *"UTF-8"* && "$LC_CTYPE" != *"UTF-8"* ]]; then
+        echo "[!] 检测到当前终端编码为 ${charmap:-未知}，菜单需要 UTF-8 才能正常显示。"
+        echo "    建议先执行: export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
+        read -rp "继续可能出现乱码，按 Enter 继续，或 Ctrl+C 终止..." _
     fi
 }
 
@@ -155,40 +166,42 @@ _authorized_keys_label() {
     else
         echo "未创建"
     fi
-    echo "=============================================="
 }
 
 _render_menu() {
     _status_colors
-    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_toggle sys_info
+    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status sys_info
     root_status=$(_status_root_login)
     password_status=$(_status_password_login)
     pubkey_status=$(_status_pubkey_login)
     authm_status=$(_status_auth_methods)
     yubi_mode=$(_status_yubikey_mode)
     auth_file_status=$(_authorized_keys_label)
-    yubi_toggle=$([ "$yubi_mode" = "未启用" ] && echo "已禁用" || echo "已启用")
+    yubi_switch_status=$([ "$yubi_mode" = "未启用" ] && echo "当前: 已禁用" || echo "当前: 已启用")
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
-    clear
-    local inner=67
-    local top=$(printf '┌%*s┐' "$inner" "" | tr ' ' '─')
-    local mid=$(printf '├%*s┤' "$inner" "" | tr ' ' '─')
-    local bot=$(printf '└%*s┘' "$inner" "" | tr ' ' '─')
+    local inner=62
+    local border=$(printf '%*s' "$((inner + 4))" "" | tr ' ' '=')
+    local divider=$(printf '%*s' "$((inner + 4))" "" | tr ' ' '-')
+    menu_line() {
+        printf "${BLUE}|${RESET} %-22s ${CYAN}%-38s${RESET} ${BLUE}|\n" "$1" "$2"
+    }
 
-    echo -e "${BLUE}${top}${RESET}"
-    printf "${BLUE}│${RESET} %-*s ${BLUE}│${RESET}\n" "$inner" "$sys_info"
-    echo -e "${BLUE}${mid}${RESET}"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "1) root 登录" "$root_status"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "2) 密码登录" "$password_status"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "3) 公钥登录" "$pubkey_status"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "4) authorized_keys" "$auth_file_status"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "5) 禁用 YubiKey" "$yubi_toggle"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "6) 配置 YubiKey" "$yubi_mode"
-    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "7) 套用预设" "$authm_status"
-    echo -e "${BLUE}${mid}${RESET}"
-    printf "${BLUE}│${RESET} %-18s %-45s ${BLUE}│${RESET}\n" "0) 退出" ""
-    echo -e "${BLUE}${bot}${RESET}"
+    clear
+    echo -e "${BLUE}${border}${RESET}"
+    printf "${BLUE}|${RESET} %-*s ${BLUE}|\n" "$inner" "sshman - SSH 登录管理 (UTF-8)"
+    printf "${BLUE}|${RESET} %-*s ${BLUE}|\n" "$inner" "$sys_info"
+    echo -e "${BLUE}${divider}${RESET}"
+    menu_line "1) root 登录" "$root_status"
+    menu_line "2) 密码登录" "$password_status"
+    menu_line "3) 公钥登录" "$pubkey_status"
+    menu_line "4) authorized_keys" "$auth_file_status"
+    menu_line "5) 禁用/恢复 YubiKey" "$yubi_switch_status"
+    menu_line "6) 配置 YubiKey" "$yubi_mode"
+    menu_line "7) 套用预设" "$authm_status"
+    echo -e "${BLUE}${divider}${RESET}"
+    menu_line "0) 退出" "Esc/0 返回"
+    echo -e "${BLUE}${border}${RESET}"
 }
 
 _set_root_login() {
@@ -278,8 +291,21 @@ _manage_keys() {
             if [ ! -f "$AUTHORIZED_KEYS" ]; then
                 echo "尚未创建 authorized_keys"; return
             fi
-            nl -ba "$AUTHORIZED_KEYS"
+            local -a numbered_lines=()
+            mapfile -t numbered_lines < <(nl -ba "$AUTHORIZED_KEYS")
+            if [ ${#numbered_lines[@]} -eq 0 ]; then
+                echo "authorized_keys 为空，无需删除"; return
+            fi
+            printf "%s\n" "${numbered_lines[@]}"
+            local line max_line
+            max_line=$(printf '%s\n' "${numbered_lines[@]}" | tail -n1 | awk '{print $1}')
             read -rp "输入要删除的行号: " line
+            if [[ ! "$line" =~ ^[0-9]+$ ]]; then
+                echo "行号必须为数字"; return
+            fi
+            if [ "$line" -lt 1 ] || [ "$line" -gt "$max_line" ]; then
+                echo "行号超出范围 (1-${max_line})"; return
+            fi
             sed -i "${line}d" "$AUTHORIZED_KEYS"
             echo "[✓] 已删除第 $line 行"
             ;;
@@ -422,6 +448,7 @@ _apply_preset() {
     _restart_ssh
 }
 
+_check_utf8_locale
 while true; do
     _render_menu
     c=$(_read_choice "请选择操作" "") || continue
