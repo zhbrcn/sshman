@@ -7,6 +7,8 @@ BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
 AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
 HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
+YUBI_CLIENT_ID="85975"
+YUBI_SECRET_KEY="//EomrFfWNk8fWV/6h7IW8pgs9Y="
 
 mkdir -p "$BACKUP_DIR"
 
@@ -55,7 +57,14 @@ _show_status() {
     echo
     echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "YubiKey (OTP): 已启用（支持同时使用密码/公钥）"
+        local line mode
+        line=$(grep "pam_yubico.so" "$PAM_SSHD" | head -n1)
+        if echo "$line" | grep -q "try_first_pass"; then
+            mode="YubiKey + 密码 (双因子)"
+        else
+            mode="仅 YubiKey OTP"
+        fi
+        echo "$mode"
         if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
             echo "授权文件: $AUTHORIZED_YUBIKEYS"
             nl -ba "$AUTHORIZED_YUBIKEYS"
@@ -167,6 +176,33 @@ _manage_keys() {
     esac
 }
 
+_ensure_yubico_package() {
+    if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
+        echo "[*] 正在安装 libpam-yubico..."
+        apt-get update -y && apt-get install -y libpam-yubico
+    fi
+}
+
+_write_yubikey_authfile() {
+    _backup_file "$AUTHORIZED_YUBIKEYS"
+    printf "%s\n" "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
+    chmod 600 "$AUTHORIZED_YUBIKEYS"
+    chown root:root "$AUTHORIZED_YUBIKEYS" 2>/dev/null
+}
+
+_set_pam_yubico() {
+    local mode=$1
+    _backup_file "$PAM_SSHD"
+    sed -i "/pam_yubico.so/d" "$PAM_SSHD"
+    local entry="auth required pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless"
+    [ "$mode" = "pass" ] && entry+=" try_first_pass"
+    if grep -q "^@include common-auth" "$PAM_SSHD"; then
+        sed -i "/^@include common-auth/i ${entry}" "$PAM_SSHD"
+    else
+        sed -i "1i ${entry}" "$PAM_SSHD"
+    fi
+}
+
 _disable_yubikey() {
     local skip_restart=$1
     _backup_file "$PAM_SSHD"
@@ -175,22 +211,35 @@ _disable_yubikey() {
     [ "$skip_restart" = "skip" ] || _restart_ssh
 }
 
-_enable_yubikey() {
-    _backup_file "$AUTHORIZED_YUBIKEYS"
-    printf "%s\n" "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
-    chmod 600 "$AUTHORIZED_YUBIKEYS"
-    chown root:root "$AUTHORIZED_YUBIKEYS" 2>/dev/null
+_choose_yubikey_mode() {
+    echo "1) 仅 YubiKey OTP (关闭密码)"
+    echo "2) YubiKey + 密码 (双因子)"
+    echo "0) 取消"
+    read -rp "请选择: " m
 
-    _backup_file "$PAM_SSHD"
-    if grep -q "pam_yubico.so" "$PAM_SSHD"; then
-        sed -i "s#pam_yubico.so.*#auth sufficient pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless#" "$PAM_SSHD"
-    else
-        sed -i "1i auth sufficient pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" "$PAM_SSHD"
-    fi
+    case $m in
+        1) _enable_yubikey_mode otp ;;
+        2) _enable_yubikey_mode pass ;;
+        0) return ;;
+        *) echo "无效选择" ;;
+    esac
+}
+
+_enable_yubikey_mode() {
+    local mode=$1
+    _ensure_yubico_package
+    _write_yubikey_authfile
+    _set_pam_yubico "$mode"
 
     _update_directive "UsePAM" "yes"
     _update_directive "ChallengeResponseAuthentication" "yes"
-    echo "[✓] 已启用固定的两把 YubiKey OTP（同时保留密码/公钥登录）"
+    if [ "$mode" = "otp" ]; then
+        _update_directive "PasswordAuthentication" "no"
+        echo "[✓] 已启用仅 YubiKey OTP 登录"
+    else
+        _update_directive "PasswordAuthentication" "yes"
+        echo "[✓] 已启用 YubiKey + 密码双因子"
+    fi
     _restart_ssh
 }
 
@@ -233,7 +282,7 @@ while true; do
     echo "2) 启用/禁用密码登录"
     echo "3) 启用/禁用公钥登录"
     echo "4) 管理 authorized_keys (自动写入我的密钥)"
-    echo "5) 启用固定的两把 YubiKey 登录"
+    echo "5) 配置 YubiKey 登录模式"
     echo "6) 禁用 YubiKey 登录"
     echo "7) 套用预设配置"
     echo "0) 退出"
@@ -245,7 +294,7 @@ while true; do
         2) _set_password_login ;;
         3) _set_pubkey_login ;;
         4) _manage_keys ;;
-        5) _enable_yubikey ;;
+        5) _choose_yubikey_mode ;;
         6) _disable_yubikey ;;
         7) _apply_preset ;;
         0) exit 0 ;;
