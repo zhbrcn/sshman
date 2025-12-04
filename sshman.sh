@@ -57,13 +57,26 @@ _ensure_kbdinteractive() {
     _update_directive "KbdInteractiveAuthentication" "yes"
 }
 
+_get_directive() {
+    local key=$1 default=$2
+    local found
+    found=$(grep -E "^${key}\\b" "$SSH_CONFIG" | tail -n1 | awk '{print $2}')
+    echo "${found:-$default}"
+}
+
 _show_status() {
     echo "================ 当前 SSH 状态 ================"
     echo "系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
     echo "服务: $SSH_SERVICE"
     echo
     echo "[sshd_config]"
-    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM|KbdInteractiveAuthentication|AuthenticationMethods)" "$SSH_CONFIG" 2>/dev/null
+    echo "PermitRootLogin $(_get_directive PermitRootLogin 未设置)"
+    echo "PasswordAuthentication $(_get_directive PasswordAuthentication 未设置)"
+    echo "KbdInteractiveAuthentication $(_get_directive KbdInteractiveAuthentication 未设置)"
+    echo "UsePAM $(_get_directive UsePAM 未设置)"
+    echo "ChallengeResponseAuthentication $(_get_directive ChallengeResponseAuthentication 未设置)"
+    echo "AuthenticationMethods $(_get_directive AuthenticationMethods 默认)"
+    echo "PubkeyAuthentication $(_get_directive PubkeyAuthentication 未设置)"
     echo
     echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
@@ -277,28 +290,41 @@ _apply_preset() {
     echo "1) 安全生产：禁止 root 登录，禁止密码，仅公钥"
     echo "2) 日常开发：允许 root 密钥，允许密码"
     echo "3) 玩具环境：root + 密码全部开启"
+    echo "4) 仅 YubiKey OTP（禁密码/公钥）"
+    echo "5) YubiKey + 密码（双因子，保留公钥）"
     read -rp "请选择预设: " p
-
-    _backup_file "$SSH_CONFIG"
-    _backup_file "$PAM_SSHD"
 
     case $p in
         1)
+            _backup_file "$SSH_CONFIG"
+            _backup_file "$PAM_SSHD"
             _update_directive "PermitRootLogin" "no"
             _update_directive "PasswordAuthentication" "no"
             _update_directive "PubkeyAuthentication" "yes"
             _disable_yubikey skip
             ;;
         2)
+            _backup_file "$SSH_CONFIG"
+            _backup_file "$PAM_SSHD"
             _update_directive "PermitRootLogin" "prohibit-password"
             _update_directive "PasswordAuthentication" "yes"
             _update_directive "PubkeyAuthentication" "yes"
             _disable_yubikey skip
             ;;
         3)
+            _backup_file "$SSH_CONFIG"
+            _backup_file "$PAM_SSHD"
             _update_directive "PermitRootLogin" "yes"
             _update_directive "PasswordAuthentication" "yes"
             _update_directive "PubkeyAuthentication" "yes"
+            ;;
+        4)
+            _enable_yubikey_mode otp
+            return
+            ;;
+        5)
+            _enable_yubikey_mode pass
+            return
             ;;
         *) echo "无效预设" ; return ;;
     esac
