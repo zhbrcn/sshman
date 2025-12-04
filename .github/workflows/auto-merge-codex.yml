@@ -23,7 +23,7 @@ jobs:
       github.actor == 'github-actions[bot]'
 
     steps:
-      - name: Checkout main
+      - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -35,6 +35,7 @@ jobs:
 
           git checkout main
           git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
+
           git merge -X theirs codex-pr --no-edit || true
 
       - name: Create backup tag
@@ -43,10 +44,15 @@ jobs:
           git tag $tag
           git push origin $tag
 
-      - name: Push merged changes
-        run: git push origin main
+      - name: Push updated main
+        run: |
+          git push origin main
 
-      - name: Auto-merge PR
-        uses: pascalgn/automerge-action@v0.15.6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Close PR manually using GitHub API
+        run: |
+          curl -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            -d '{"state": "closed"}'
