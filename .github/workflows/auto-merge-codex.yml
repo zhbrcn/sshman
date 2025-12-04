@@ -35,7 +35,6 @@ jobs:
 
           git checkout main
           git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
-
           git merge -X theirs codex-pr --no-edit || true
 
       - name: Create backup tag
@@ -45,11 +44,9 @@ jobs:
           git push origin $tag
 
       - name: Push updated main
-        run: |
-          git push origin main
+        run: git push origin main
 
-
-      - name: Close PR manually using GitHub API
+      - name: Close PR using GitHub API
         run: |
           curl -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
