@@ -47,6 +47,11 @@ _update_directive() {
     fi
 }
 
+_remove_directive() {
+    local key=$1
+    sed -i "/^${key}\\b/d" "$SSH_CONFIG"
+}
+
 _ensure_kbdinteractive() {
     # 确保键盘交互式认证开启，否则 YubiKey OTP 不会被 sshd 提供
     _update_directive "KbdInteractiveAuthentication" "yes"
@@ -58,7 +63,7 @@ _show_status() {
     echo "服务: $SSH_SERVICE"
     echo
     echo "[sshd_config]"
-    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM|KbdInteractiveAuthentication)" "$SSH_CONFIG" 2>/dev/null
+    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM|KbdInteractiveAuthentication|AuthenticationMethods)" "$SSH_CONFIG" 2>/dev/null
     echo
     echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
@@ -227,6 +232,7 @@ session include common-session
 session include common-session-noninteractive
 EOF
     echo "[✓] 已禁用 YubiKey 登录并恢复默认 PAM"
+    _remove_directive "AuthenticationMethods"
     [ "$skip_restart" = "skip" ] || _restart_ssh
 }
 
@@ -254,11 +260,14 @@ _enable_yubikey_mode() {
     _update_directive "UsePAM" "yes"
     _update_directive "ChallengeResponseAuthentication" "yes"
     _ensure_kbdinteractive
+    _update_directive "AuthenticationMethods" "keyboard-interactive"
     if [ "$mode" = "otp" ]; then
         _update_directive "PasswordAuthentication" "no"
+        _update_directive "PubkeyAuthentication" "no"
         echo "[✓] 已启用仅 YubiKey OTP 登录"
     else
         _update_directive "PasswordAuthentication" "yes"
+        _update_directive "PubkeyAuthentication" "yes"
         echo "[✓] 已启用 YubiKey + 密码双因子"
     fi
     _restart_ssh
