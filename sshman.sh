@@ -93,6 +93,8 @@ _format_auth_methods() {
 
 _read_choice() {
     local prompt="$1" key char
+    # 清空可能遗留的输入缓冲，避免上级菜单的换行影响本次读取
+    while read -rsn1 -t 0.001 char; do :; done
     echo -n "$prompt (Esc/0 返回): "
     # 先读入首个按键以处理 Esc/0 快速返回
     IFS= read -rsn1 key
@@ -170,24 +172,24 @@ _render_menu() {
     authm_status=$(_status_auth_methods)
     yubi_mode=$(_status_yubikey_mode)
     auth_file_status=$(_authorized_keys_label)
-    yubi_toggle=$([ "$yubi_mode" = "未启用" ] && echo "已禁用" || echo "进行中")
-    sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux)  服务: $SSH_SERVICE"
+    yubi_toggle=$([ "$yubi_mode" = "未启用" ] && echo "已禁用" || echo "已启用")
+    sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     clear
-    local border="┌──────────────────────── SSH 登录管理 ────────────────────────┐"
+    local border="┌───────────────────────── SSH 登录管理 ─────────────────────────┐"
     echo -e "${BLUE}${border}${RESET}"
-    printf "${BLUE}│${RESET} %-60s ${BLUE}│${RESET}\n" "$sys_info"
-    echo -e "${BLUE}├────────────────────────────────────────────────────────────┤${RESET}"
-    printf "${BLUE}│${RESET} 1) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
-    printf "${BLUE}│${RESET} 2) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
-    printf "${BLUE}│${RESET} 3) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
-    printf "${BLUE}│${RESET} 4) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "authorized_keys" "$auth_file_status"
-    printf "${BLUE}│${RESET} 5) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey 登录" "$yubi_toggle"
-    printf "${BLUE}│${RESET} 6) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey 模式" "$yubi_mode"
-    printf "${BLUE}│${RESET} 7) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "套用预设配置" "$authm_status"
-    echo -e "${BLUE}├────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "${BLUE}│${RESET} 0) 退出                                               ${BLUE}│${RESET}"
-    echo -e "${BLUE}└────────────────────────────────────────────────────────────┘${RESET}"
+    printf "${BLUE}│${RESET} %-64s ${BLUE}│${RESET}\n" "$sys_info"
+    echo -e "${BLUE}├───────────────────────────────────────────────────────────────┤${RESET}"
+    printf "${BLUE}│${RESET} 1) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
+    printf "${BLUE}│${RESET} 2) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
+    printf "${BLUE}│${RESET} 3) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
+    printf "${BLUE}│${RESET} 4) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "authorized_keys" "$auth_file_status"
+    printf "${BLUE}│${RESET} 5) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey" "$yubi_toggle"
+    printf "${BLUE}│${RESET} 6) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey" "$yubi_mode"
+    printf "${BLUE}│${RESET} 7) %-16s ${CYAN}%-34s${RESET} ${BLUE}│${RESET}\n" "套用预设" "$authm_status"
+    echo -e "${BLUE}├───────────────────────────────────────────────────────────────┤${RESET}"
+    echo -e "${BLUE}│${RESET} 0) 退出                                                 ${BLUE}│${RESET}"
+    echo -e "${BLUE}└───────────────────────────────────────────────────────────────┘${RESET}"
     echo -n "请选择操作: "
 }
 
@@ -424,8 +426,7 @@ _apply_preset() {
 
 while true; do
     _render_menu
-    read -rsn1 c
-    echo
+    read -r c
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
