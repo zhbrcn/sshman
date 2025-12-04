@@ -92,14 +92,22 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1"
-    local key
-    read -rsn1 -p "$prompt (Esc/0 返回): " key
-    echo
+    local prompt="$1" key char
+    echo -n "$prompt (Esc/0 返回): "
+    # 先读入首个按键以处理 Esc/0 快速返回
+    IFS= read -rsn1 key
+    # 如果是 Esc 或 0，直接返回上级
     if [[ "$key" == $'\e' || "$key" == "0" ]]; then
+        echo
         return 1
     fi
-    echo "$key"
+    # 继续吞掉本行剩余输入直到换行或超时，便于处理多位数字
+    while read -rsn1 -t 0.05 char; do
+        [[ "$char" == $'\n' ]] && break
+        key+="$char"
+    done
+    echo
+    [[ -n "$key" ]] && echo "$key"
 }
 
 _status_colors() {
@@ -155,7 +163,7 @@ _authorized_keys_label() {
 
 _render_menu() {
     _status_colors
-    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_toggle
+    local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_toggle sys_info
     root_status=$(_status_root_login)
     password_status=$(_status_password_login)
     pubkey_status=$(_status_pubkey_login)
@@ -163,21 +171,23 @@ _render_menu() {
     yubi_mode=$(_status_yubikey_mode)
     auth_file_status=$(_authorized_keys_label)
     yubi_toggle=$([ "$yubi_mode" = "未启用" ] && echo "已禁用" || echo "进行中")
+    sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux)  服务: $SSH_SERVICE"
 
     clear
-    echo -e "${BLUE}┌────────────────────── SSH 登录管理 ──────────────────────┐${RESET}"
-    printf "${BLUE}│${RESET} %-54s ${BLUE}│${RESET}\n" "系统: $(lsb_release -ds 2>/dev/null || echo Linux)  服务: $SSH_SERVICE"
-    echo -e "${BLUE}├───────────────────────────────────────────────────────────┤${RESET}"
-    printf "${BLUE}│${RESET} 1) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
-    printf "${BLUE}│${RESET} 2) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
-    printf "${BLUE}│${RESET} 3) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
-    printf "${BLUE}│${RESET} 4) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "管理 authorized_keys" "$auth_file_status"
-    printf "${BLUE}│${RESET} 5) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey 登录" "$yubi_toggle"
-    printf "${BLUE}│${RESET} 6) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey 模式" "$yubi_mode"
-    printf "${BLUE}│${RESET} 7) %-24s ${CYAN}%-23s${RESET} ${BLUE}│${RESET}\n" "套用预设配置" "$authm_status"
-    echo -e "${BLUE}├───────────────────────────────────────────────────────────┤${RESET}"
+    local border="┌──────────────────────── SSH 登录管理 ────────────────────────┐"
+    echo -e "${BLUE}${border}${RESET}"
+    printf "${BLUE}│${RESET} %-60s ${BLUE}│${RESET}\n" "$sys_info"
+    echo -e "${BLUE}├────────────────────────────────────────────────────────────┤${RESET}"
+    printf "${BLUE}│${RESET} 1) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "root 登录" "$root_status"
+    printf "${BLUE}│${RESET} 2) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "密码登录" "$password_status"
+    printf "${BLUE}│${RESET} 3) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "公钥登录" "$pubkey_status"
+    printf "${BLUE}│${RESET} 4) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "authorized_keys" "$auth_file_status"
+    printf "${BLUE}│${RESET} 5) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "禁用 YubiKey 登录" "$yubi_toggle"
+    printf "${BLUE}│${RESET} 6) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "配置 YubiKey 模式" "$yubi_mode"
+    printf "${BLUE}│${RESET} 7) %-18s ${CYAN}%-32s${RESET} ${BLUE}│${RESET}\n" "套用预设配置" "$authm_status"
+    echo -e "${BLUE}├────────────────────────────────────────────────────────────┤${RESET}"
     echo -e "${BLUE}│${RESET} 0) 退出                                               ${BLUE}│${RESET}"
-    echo -e "${BLUE}└───────────────────────────────────────────────────────────┘${RESET}"
+    echo -e "${BLUE}└────────────────────────────────────────────────────────────┘${RESET}"
     echo -n "请选择操作: "
 }
 
