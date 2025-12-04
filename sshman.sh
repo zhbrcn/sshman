@@ -9,7 +9,9 @@ SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
-U2F_KEYS="/etc/ssh/u2f_keys"
+AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
+# 固定 YubiKey 公共 ID（不再动态注册）
+HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -58,16 +60,16 @@ _show_status() {
     grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication)" "$SSH_CONFIG" 2>/dev/null
     echo
     echo "[PAM YubiKey]"
-    if grep -q "pam_u2f.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "YubiKey 认证: 已启用"
-        if [ -f "$U2F_KEYS" ]; then
-            echo "映射文件: $U2F_KEYS"
-            nl -ba "$U2F_KEYS"
+    if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
+        echo "YubiKey (OTP) 认证: 已启用"
+        if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
+            echo "授权文件: $AUTHORIZED_YUBIKEYS"
+            nl -ba "$AUTHORIZED_YUBIKEYS"
         else
-            echo "未找到 U2F 映射文件"
+            echo "未找到授权文件"
         fi
     else
-        echo "YubiKey 认证: 未启用"
+        echo "YubiKey (OTP) 认证: 未启用"
     fi
     echo
     echo "[authorized_keys]"
@@ -173,54 +175,26 @@ _manage_keys() {
 
 _disable_yubikey() {
     _backup_file "$PAM_SSHD"
-    sed -i "/pam_u2f.so/d" "$PAM_SSHD"
+    sed -i "/pam_yubico.so/d" "$PAM_SSHD"
     echo "[✓] 已禁用 YubiKey 登录"
     _restart_ssh
 }
 
 _enable_yubikey() {
+    _backup_file "$AUTHORIZED_YUBIKEYS"
+    printf "%s\n" "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
+    chmod 600 "$AUTHORIZED_YUBIKEYS"
+
     _backup_file "$PAM_SSHD"
-    if grep -q "pam_u2f.so" "$PAM_SSHD"; then
-        sed -i "s#pam_u2f.so.*#auth required pam_u2f.so authfile=${U2F_KEYS} cue#" "$PAM_SSHD"
+    if grep -q "pam_yubico.so" "$PAM_SSHD"; then
+        sed -i "s#pam_yubico.so.*#auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless#" "$PAM_SSHD"
     else
-        echo "auth required pam_u2f.so authfile=${U2F_KEYS} cue" >> "$PAM_SSHD"
+        echo "auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" >> "$PAM_SSHD"
     fi
-    echo "[✓] 已启用 YubiKey 登录"
+
+    _update_directive "ChallengeResponseAuthentication" "yes"
+    echo "[✓] 已启用固定的 YubiKey OTP 登录 (2 把设备)"
     _restart_ssh
-}
-
-_register_yubikeys() {
-    echo "将为 pam_u2f 配置最多两个 YubiKey 映射。"
-    read -rp "输入要绑定的系统用户名(默认: root): " u
-    local user=${u:-root}
-
-    mkdir -p "$(dirname "$U2F_KEYS")"
-    touch "$U2F_KEYS"
-    _backup_file "$U2F_KEYS"
-
-    local entries=()
-    for i in 1 2; do
-        read -rp "粘贴第 ${i} 个 YubiKey 的 pamu2fcfg 输出行(留空跳过): " line
-        [ -z "$line" ] && continue
-        if [[ $line != ${user}:* ]]; then
-            line="${user}:${line}"
-        fi
-        entries+=("$line")
-    done
-
-    if [ ${#entries[@]} -eq 0 ]; then
-        echo "未添加任何 YubiKey 映射"
-        return
-    fi
-
-    tmp=$(mktemp)
-    grep -v "^${user}:" "$U2F_KEYS" > "$tmp" || true
-    for e in "${entries[@]}"; do
-        echo "$e" >> "$tmp"
-    done
-    mv "$tmp" "$U2F_KEYS"
-    chmod 600 "$U2F_KEYS"
-    echo "[✓] 已为用户 ${user} 写入 ${#entries[@]} 个 YubiKey 映射"
 }
 
 _apply_preset() {
@@ -262,10 +236,9 @@ while true; do
     echo "2) 启用/禁用密码登录"
     echo "3) 启用/禁用公钥登录"
     echo "4) 管理 authorized_keys (自动写入我的密钥)"
-    echo "5) 为用户注册最多 2 个 YubiKey"
-    echo "6) 启用 YubiKey 登录"
-    echo "7) 禁用 YubiKey 登录"
-    echo "8) 套用预设配置"
+    echo "5) 启用固定的两把 YubiKey 登录"
+    echo "6) 禁用 YubiKey 登录"
+    echo "7) 套用预设配置"
     echo "0) 退出"
     echo "--------------------------------"
     read -rp "请选择操作: " c
@@ -275,10 +248,9 @@ while true; do
         2) _set_password_login ;;
         3) _set_pubkey_login ;;
         4) _manage_keys ;;
-        5) _register_yubikeys ;;
-        6) _enable_yubikey ;;
-        7) _disable_yubikey ;;
-        8) _apply_preset ;;
+        5) _enable_yubikey ;;
+        6) _disable_yubikey ;;
+        7) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
