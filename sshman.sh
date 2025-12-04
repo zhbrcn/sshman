@@ -1,16 +1,11 @@
 #!/bin/bash
-# ==========================================
-# sshman - SSH 登录管理脚本
-# Author: zhbrcn + ChatGPT
-# Version: 0.2
-# ==========================================
+# sshman - SSH 登录管理脚本 (中文交互)
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
 AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
-# 固定 YubiKey 公共 ID（不再动态注册）
 HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
 
 mkdir -p "$BACKUP_DIR"
@@ -42,8 +37,7 @@ _restart_ssh() {
 }
 
 _update_directive() {
-    local key=$1
-    local value=$2
+    local key=$1 value=$2
     if grep -q "^${key}" "$SSH_CONFIG"; then
         sed -i "s/^${key}.*/${key} ${value}/" "$SSH_CONFIG"
     else
@@ -53,23 +47,23 @@ _update_directive() {
 
 _show_status() {
     echo "================ 当前 SSH 状态 ================"
-    echo "- 系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
-    echo "- SSH 服务名: $SSH_SERVICE"
+    echo "系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
+    echo "服务: $SSH_SERVICE"
     echo
     echo "[sshd_config]"
-    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication)" "$SSH_CONFIG" 2>/dev/null
+    grep -E "^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|ChallengeResponseAuthentication|UsePAM)" "$SSH_CONFIG" 2>/dev/null
     echo
     echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "YubiKey (OTP) 认证: 已启用"
+        echo "YubiKey (OTP): 已启用（支持同时使用密码/公钥）"
         if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
             echo "授权文件: $AUTHORIZED_YUBIKEYS"
             nl -ba "$AUTHORIZED_YUBIKEYS"
         else
-            echo "未找到授权文件"
+            echo "授权文件缺失"
         fi
     else
-        echo "YubiKey (OTP) 认证: 未启用"
+        echo "YubiKey (OTP): 未启用"
     fi
     echo
     echo "[authorized_keys]"
@@ -174,26 +168,29 @@ _manage_keys() {
 }
 
 _disable_yubikey() {
+    local skip_restart=$1
     _backup_file "$PAM_SSHD"
     sed -i "/pam_yubico.so/d" "$PAM_SSHD"
     echo "[✓] 已禁用 YubiKey 登录"
-    _restart_ssh
+    [ "$skip_restart" = "skip" ] || _restart_ssh
 }
 
 _enable_yubikey() {
     _backup_file "$AUTHORIZED_YUBIKEYS"
     printf "%s\n" "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
     chmod 600 "$AUTHORIZED_YUBIKEYS"
+    chown root:root "$AUTHORIZED_YUBIKEYS" 2>/dev/null
 
     _backup_file "$PAM_SSHD"
     if grep -q "pam_yubico.so" "$PAM_SSHD"; then
-        sed -i "s#pam_yubico.so.*#auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless#" "$PAM_SSHD"
+        sed -i "s#pam_yubico.so.*#auth sufficient pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless#" "$PAM_SSHD"
     else
-        echo "auth required pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" >> "$PAM_SSHD"
+        sed -i "1i auth sufficient pam_yubico.so authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" "$PAM_SSHD"
     fi
 
+    _update_directive "UsePAM" "yes"
     _update_directive "ChallengeResponseAuthentication" "yes"
-    echo "[✓] 已启用固定的 YubiKey OTP 登录 (2 把设备)"
+    echo "[✓] 已启用固定的两把 YubiKey OTP（同时保留密码/公钥登录）"
     _restart_ssh
 }
 
@@ -211,13 +208,13 @@ _apply_preset() {
             _update_directive "PermitRootLogin" "no"
             _update_directive "PasswordAuthentication" "no"
             _update_directive "PubkeyAuthentication" "yes"
-            _disable_yubikey
+            _disable_yubikey skip
             ;;
         2)
             _update_directive "PermitRootLogin" "prohibit-password"
             _update_directive "PasswordAuthentication" "yes"
             _update_directive "PubkeyAuthentication" "yes"
-            _disable_yubikey
+            _disable_yubikey skip
             ;;
         3)
             _update_directive "PermitRootLogin" "yes"
