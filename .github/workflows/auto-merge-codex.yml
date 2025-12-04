@@ -17,15 +17,19 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
 
-    if: github.actor == 'github-actions[bot]' || startsWith(github.head_ref, 'codex') || contains(github.event.pull_request.title, 'Codex')
+    # 判断是否为 Codex PR（分支名包含 codex/，或标题包含 codex）
+    if: |
+      startsWith(github.head_ref, 'codex/') ||
+      contains(github.event.pull_request.title, 'codex') ||
+      github.actor == 'github-actions[bot]'
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Merge PR with theirs (优先使用 PR 内容，自动覆盖 main)
+      - name: Merge PR with theirs (优先 PR 覆盖 main)
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
@@ -36,16 +40,18 @@ jobs:
           # fetch PR branch
           git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
 
-          # 强制使用 PR 的内容覆盖 main（自动解决所有冲突）
+          # 自动解决冲突：PR 内容优先（theirs）
           git merge -X theirs codex-pr --no-edit || true
 
-          # push 回 main 分支
-          git push origin main
+      - name: Create backup tag (自动备份当前 main 状态)
+        run: |
+          tag="backup-$(date +'%Y%m%d-%H%M%S')"
+          git tag $tag
+          git push origin $tag
 
-      - name: Auto-approve PR
-        uses: hmarr/auto-approve-action@v3
-        with:
-          pull-request-number: ${{ github.event.pull_request.number }}
+      - name: Push merged changes to main
+        run: |
+          git push origin main
 
       - name: Auto-merge PR
         uses: pascalgn/automerge-action@v0.15.6
