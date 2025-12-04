@@ -180,27 +180,24 @@ _render_menu() {
     yubi_switch_status=$([ "$yubi_mode" = "未启用" ] && echo "当前: 已禁用" || echo "当前: 已启用")
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
-    local inner=62
-    local border=$(printf '%*s' "$((inner + 4))" "" | tr ' ' '=')
-    local divider=$(printf '%*s' "$((inner + 4))" "" | tr ' ' '-')
+    local border=$(printf '%*s' 68 "" | tr ' ' '=')
+    local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf "${BLUE}|${RESET} %-22s ${CYAN}%-38s${RESET} ${BLUE}|\n" "$1" "$2"
+        printf " %-4s %-20s %s\n" "$1" "$2" "$3"
     }
 
     clear
     echo -e "${BLUE}${border}${RESET}"
-    printf "${BLUE}|${RESET} %-*s ${BLUE}|\n" "$inner" "sshman - SSH 登录管理 (UTF-8)"
-    printf "${BLUE}|${RESET} %-*s ${BLUE}|\n" "$inner" "$sys_info"
-    echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1) root 登录" "$root_status"
-    menu_line "2) 密码登录" "$password_status"
-    menu_line "3) 公钥登录" "$pubkey_status"
-    menu_line "4) authorized_keys" "$auth_file_status"
-    menu_line "5) 禁用/恢复 YubiKey" "$yubi_switch_status"
-    menu_line "6) 配置 YubiKey" "$yubi_mode"
-    menu_line "7) 套用预设" "$authm_status"
-    echo -e "${BLUE}${divider}${RESET}"
-    menu_line "0) 退出" "Esc/0 返回"
+    printf " sshman - SSH 登录管理 (UTF-8)\n"
+    printf " %s\n" "$sys_info"
+    echo -e "${divider}"
+    menu_line "1)" "root 登录" "$root_status"
+    menu_line "2)" "密码登录" "$password_status"
+    menu_line "3)" "公钥登录与密钥" "$pubkey_status / $auth_file_status"
+    menu_line "4)" "YubiKey" "$yubi_mode / $yubi_switch_status"
+    menu_line "5)" "套用预设" "$authm_status"
+    echo -e "${divider}"
+    echo " 0) 退出 (Esc/0 返回)"
     echo -e "${BLUE}${border}${RESET}"
 }
 
@@ -313,6 +310,24 @@ _manage_keys() {
     esac
 }
 
+_manage_pubkey_suite() {
+    while true; do
+        echo "1) 设置公钥登录开关"
+        echo "2) 管理 authorized_keys"
+        echo "0) 返回"
+        local a
+        a=$(_read_choice "请选择" "Esc/0 返回") || return
+
+        case $a in
+            1) _set_pubkey_login ;;
+            2) _manage_keys ;;
+            0) return ;;
+            *) echo "无效选择" ;;
+        esac
+        echo
+    done
+}
+
 _ensure_yubico_package() {
     if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
         echo "[*] 正在安装 libpam-yubico..."
@@ -377,6 +392,24 @@ _choose_yubikey_mode() {
         0) return ;;
         *) echo "无效选择" ;;
     esac
+}
+
+_manage_yubikey() {
+    while true; do
+        echo "1) 配置/切换 YubiKey 模式"
+        echo "2) 禁用/恢复 YubiKey"
+        echo "0) 返回"
+        local a
+        a=$(_read_choice "请选择" "Esc/0 返回") || return
+
+        case $a in
+            1) _choose_yubikey_mode ;;
+            2) _disable_yubikey ;;
+            0) return ;;
+            *) echo "无效选择" ;;
+        esac
+        echo
+    done
 }
 
 _enable_yubikey_mode() {
@@ -455,11 +488,9 @@ while true; do
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
-        3) _set_pubkey_login ;;
-        4) _manage_keys ;;
-        5) _disable_yubikey ;;
-        6) _choose_yubikey_mode ;;
-        7) _apply_preset ;;
+        3) _manage_pubkey_suite ;;
+        4) _manage_yubikey ;;
+        5) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
