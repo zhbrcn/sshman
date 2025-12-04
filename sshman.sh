@@ -64,44 +64,76 @@ _get_directive() {
     echo "${found:-$default}"
 }
 
+_format_on_off() {
+    local flag=$1
+    case $flag in
+        yes) echo "已开启" ;;
+        no) echo "已关闭" ;;
+        *) echo "$flag" ;;
+    esac
+}
+
+_format_root_login() {
+    case $1 in
+        yes) echo "root 登录: 允许" ;;
+        prohibit-password) echo "root 登录: 仅密钥" ;;
+        no) echo "root 登录: 禁止" ;;
+        *) echo "root 登录: 未设置" ;;
+    esac
+}
+
+_format_auth_methods() {
+    local val=$1
+    case $val in
+        "keyboard-interactive") echo "认证方式: 仅键盘交互 (适用于 YubiKey)" ;;
+        默认) echo "认证方式: 默认" ;;
+        *) echo "认证方式: $val" ;;
+    esac
+}
+
 _show_status() {
+    local root_login password_login pubkey_login kbd_auth pam_on challenge_on authm
+    root_login=$(_get_directive PermitRootLogin 未设置)
+    password_login=$(_get_directive PasswordAuthentication 未设置)
+    pubkey_login=$(_get_directive PubkeyAuthentication 未设置)
+    kbd_auth=$(_get_directive KbdInteractiveAuthentication 未设置)
+    pam_on=$(_get_directive UsePAM 未设置)
+    challenge_on=$(_get_directive ChallengeResponseAuthentication 未设置)
+    authm=$(_get_directive AuthenticationMethods 默认)
+
     echo "================ 当前 SSH 状态 ================"
     echo "系统: $(lsb_release -ds 2>/dev/null || echo Linux)"
     echo "服务: $SSH_SERVICE"
     echo
-    echo "[sshd_config]"
-    echo "PermitRootLogin $(_get_directive PermitRootLogin 未设置)"
-    echo "PasswordAuthentication $(_get_directive PasswordAuthentication 未设置)"
-    echo "KbdInteractiveAuthentication $(_get_directive KbdInteractiveAuthentication 未设置)"
-    echo "UsePAM $(_get_directive UsePAM 未设置)"
-    echo "ChallengeResponseAuthentication $(_get_directive ChallengeResponseAuthentication 未设置)"
-    echo "AuthenticationMethods $(_get_directive AuthenticationMethods 默认)"
-    echo "PubkeyAuthentication $(_get_directive PubkeyAuthentication 未设置)"
+    _format_root_login "$root_login"
+    echo "密码登录: $(_format_on_off "$password_login")"
+    echo "公钥登录: $(_format_on_off "$pubkey_login")"
+    echo "键盘交互: $(_format_on_off "$kbd_auth")"
+    echo "PAM: $(_format_on_off "$pam_on")"
+    echo "挑战响应: $(_format_on_off "$challenge_on")"
+    _format_auth_methods "$authm"
     echo
-    echo "[PAM YubiKey]"
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        local mode
         if grep -q "^@include common-auth" "$PAM_SSHD"; then
-            mode="YubiKey + 密码 (双因子)"
+            echo "YubiKey 登录: YubiKey + 密码 (双因子)"
         else
-            mode="仅 YubiKey OTP"
+            echo "YubiKey 登录: 仅 YubiKey OTP"
         fi
-        echo "$mode"
         if [ -f "$AUTHORIZED_YUBIKEYS" ]; then
-            echo "授权文件: $AUTHORIZED_YUBIKEYS"
+            echo "授权列表 ($AUTHORIZED_YUBIKEYS):"
             nl -ba "$AUTHORIZED_YUBIKEYS"
         else
             echo "授权文件缺失"
         fi
     else
-        echo "YubiKey (OTP): 未启用"
+        echo "YubiKey 登录: 未启用"
     fi
     echo
-    echo "[authorized_keys]"
     if [ -f "$AUTHORIZED_KEYS" ]; then
+        echo "authorized_keys 列表:"
         nl -ba "$AUTHORIZED_KEYS"
     else
-        echo "尚未创建 authorized_keys"
+        echo "authorized_keys: 尚未创建"
     fi
     echo "=============================================="
 }
