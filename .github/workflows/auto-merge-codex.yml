@@ -17,7 +17,6 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
 
-    # 判断是否为 Codex PR（分支名包含 codex/，或标题包含 codex）
     if: |
       startsWith(github.head_ref, 'codex/') ||
       contains(github.event.pull_request.title, 'codex') ||
@@ -29,29 +28,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge PR with theirs (优先 PR 覆盖 main)
+      - name: Merge PR with theirs (PR 覆盖 main)
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          # checkout main
           git checkout main
-
-          # fetch PR branch
           git fetch origin pull/${{ github.event.pull_request.number }}/head:codex-pr
-
-          # 自动解决冲突：PR 内容优先（theirs）
           git merge -X theirs codex-pr --no-edit || true
 
-      - name: Create backup tag (自动备份当前 main 状态)
+      - name: Create backup tag
         run: |
           tag="backup-$(date +'%Y%m%d-%H%M%S')"
           git tag $tag
           git push origin $tag
 
-      - name: Push merged changes to main
-        run: |
-          git push origin main
+      - name: Push merged changes
+        run: git push origin main
 
       - name: Auto-merge PR
         uses: pascalgn/automerge-action@v0.15.6
