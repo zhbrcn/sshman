@@ -94,6 +94,8 @@ _format_auth_methods() {
 _read_choice() {
     local prompt="$1" back_hint="$2" line hint_suffix=""
 
+    while IFS= read -rsn1 -t 0.001; do :; done
+
     [ -n "$back_hint" ] && hint_suffix=" (${back_hint})"
     read -r -p "${prompt}${hint_suffix}: " line || return 1
 
@@ -153,6 +155,7 @@ _authorized_keys_label() {
     else
         echo "未创建"
     fi
+    echo "=============================================="
 }
 
 _render_menu() {
@@ -168,18 +171,24 @@ _render_menu() {
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     clear
-    echo -e "${CYAN}========= SSH 登录管理 =========${RESET}"
-    echo "$sys_info"
-    echo "---------------------------------------"
-    printf "1) %-12s : %s\n" "root 登录" "$root_status"
-    printf "2) %-12s : %s\n" "密码登录" "$password_status"
-    printf "3) %-12s : %s\n" "公钥登录" "$pubkey_status"
-    printf "4) %-12s : %s\n" "authorized_keys" "$auth_file_status"
-    printf "5) %-12s : %s\n" "禁用 YubiKey" "$yubi_toggle"
-    printf "6) %-12s : %s\n" "配置 YubiKey" "$yubi_mode"
-    printf "7) %-12s : %s\n" "套用预设" "$authm_status"
-    echo "---------------------------------------"
-    echo "0) 退出"
+    local inner=67
+    local top=$(printf '┌%*s┐' "$inner" "" | tr ' ' '─')
+    local mid=$(printf '├%*s┤' "$inner" "" | tr ' ' '─')
+    local bot=$(printf '└%*s┘' "$inner" "" | tr ' ' '─')
+
+    echo -e "${BLUE}${top}${RESET}"
+    printf "${BLUE}│${RESET} %-*s ${BLUE}│${RESET}\n" "$inner" "$sys_info"
+    echo -e "${BLUE}${mid}${RESET}"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "1) root 登录" "$root_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "2) 密码登录" "$password_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "3) 公钥登录" "$pubkey_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "4) authorized_keys" "$auth_file_status"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "5) 禁用 YubiKey" "$yubi_toggle"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "6) 配置 YubiKey" "$yubi_mode"
+    printf "${BLUE}│${RESET} %-18s ${CYAN}%-45s${RESET} ${BLUE}│${RESET}\n" "7) 套用预设" "$authm_status"
+    echo -e "${BLUE}${mid}${RESET}"
+    printf "${BLUE}│${RESET} %-18s %-45s ${BLUE}│${RESET}\n" "0) 退出" ""
+    echo -e "${BLUE}${bot}${RESET}"
 }
 
 _set_root_login() {
@@ -427,4 +436,6 @@ while true; do
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
+    echo
+    read -rp "按回车继续..." _
 done
