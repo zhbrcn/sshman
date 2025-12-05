@@ -14,6 +14,7 @@ YUBI_CLIENT_ID="85975"
 YUBI_SECRET_KEY="//EomrFfWNk8fWV/6h7IW8pgs9Y="
 
 mkdir -p "$BACKUP_DIR"
+PAUSE_FLAG=1
 
 _detect_ssh_service() {
     if systemctl list-unit-files | grep -q "^ssh.service"; then
@@ -220,8 +221,8 @@ _render_menu() {
     local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status yubi_display sys_info
     root_status=$(_blue_text "$(_status_root_login)")
     password_status=$(_blue_text "$(_status_password_login)")
-    auth_file_status=$(_authorized_keys_label)
-    pubkey_status=$(_blue_text "$(_status_pubkey_login) / $auth_file_status")
+    pubkey_status=$(_blue_text "$(_status_pubkey_login)")
+    auth_file_status=$(_blue_text "$(_authorized_keys_label)")
     authm_status=$(_blue_text "$(_status_auth_methods)")
     yubi_mode=$(_status_yubikey_mode)
     if [[ "$yubi_mode" == "未启用" ]]; then
@@ -245,9 +246,10 @@ _render_menu() {
     echo -e "${BLUE}${divider}${RESET}"
     menu_line "1)" "root 登录" "$root_status"
     menu_line "2)" "密码登录" "$password_status"
-    menu_line "3)" "公钥登录及密钥" "$pubkey_status"
-    menu_line "4)" "YubiKey" "$yubi_display"
-    menu_line "5)" "推荐预设" "$authm_status"
+    menu_line "3)" "公钥登录开关" "$pubkey_status"
+    menu_line "4)" "authorized_keys" "$auth_file_status"
+    menu_line "5)" "YubiKey" "$yubi_display"
+    menu_line "6)" "推荐预设" "$authm_status"
     echo -e "${BLUE}${divider}${RESET}"
     echo " 0) 退出（Esc/0 返回）"
     echo -e "${BLUE}${border}${RESET}"
@@ -260,7 +262,10 @@ _set_root_login() {
     echo "3) 禁止 root 登录"
     local a
     a=$(_read_choice "请选择" "Esc/0 返回")
-    [[ -z "$a" ]] && return
+    if [[ -z "$a" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     _backup_file "$SSH_CONFIG"
     case $a in
@@ -278,7 +283,10 @@ _set_password_login() {
     echo "2) 关闭密码登录"
     local a
     a=$(_read_choice "请选择" "Esc/0 返回")
-    [[ -z "$a" ]] && return
+    if [[ -z "$a" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -295,7 +303,10 @@ _set_pubkey_login() {
     echo "2) 关闭公钥登录"
     local a
     a=$(_read_choice "请选择" "Esc/0 返回")
-    [[ -z "$a" ]] && return
+    if [[ -z "$a" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -318,7 +329,10 @@ _manage_keys() {
     echo "4) 按行号删除公钥"
     local a
     a=$(_read_choice "请选择" "Esc/0 返回")
-    [[ -z "$a" ]] && return
+    if [[ -z "$a" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     case $a in
         1)
@@ -369,27 +383,6 @@ _manage_keys() {
             ;;
         *) echo "无效选项" ;;
     esac
-}
-
-_manage_pubkey_suite() {
-    while true; do
-        _section_header "公钥登录 / 密钥" "登录: $(_status_pubkey_login) | 密钥: $(_authorized_keys_label)"
-        echo "状态：登录 $(_status_pubkey_login) | 密钥 $(_authorized_keys_label)"
-        echo "1) 切换公钥登录开关"
-        echo "2) 管理 authorized_keys"
-        echo "0) 返回"
-        local a
-        a=$(_read_choice "请选择" "Esc/0 返回")
-        [[ -z "$a" ]] && return
-
-        case $a in
-            1) _set_pubkey_login ;;
-            2) _manage_keys ;;
-            0) return ;;
-            *) echo "无效选项" ;;
-        esac
-        echo
-    done
 }
 
 _ensure_yubico_package() {
@@ -450,12 +443,15 @@ _choose_yubikey_mode() {
     echo "0) 取消"
     local m
     m=$(_read_choice "请选择" "Esc/0 返回")
-    [[ -z "$m" ]] && return
+    if [[ -z "$m" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     case $m in
         1) _enable_yubikey_mode otp ;;
         2) _enable_yubikey_mode pass ;;
-        0) return ;;
+        0) PAUSE_FLAG=0; return ;;
         *) echo "无效选项" ;;
     esac
 }
@@ -469,12 +465,15 @@ _manage_yubikey() {
         echo "0) 返回"
         local a
         a=$(_read_choice "请选择" "Esc/0 返回")
-        [[ -z "$a" ]] && return
+        if [[ -z "$a" ]]; then
+            PAUSE_FLAG=0
+            return
+        fi
 
         case $a in
             1) _choose_yubikey_mode ;;
             2) _disable_yubikey ;;
-            0) return ;;
+            0) PAUSE_FLAG=0; return ;;
             *) echo "无效选项" ;;
         esac
         echo
@@ -514,7 +513,10 @@ _apply_preset() {
     echo "5) YubiKey + 密码（保留公钥）"
     local p
     p=$(_read_choice "选择预设" "Esc/0 返回")
-    [[ -z "$p" ]] && return
+    if [[ -z "$p" ]]; then
+        PAUSE_FLAG=0
+        return
+    fi
 
     case $p in
         1)
@@ -555,18 +557,25 @@ _apply_preset() {
 
 _check_utf8_locale
 while true; do
+    PAUSE_FLAG=1
     _render_menu
     c=$(_read_choice "请选择操作" "")
-    [[ -z "$c" ]] && continue
+    if [[ -z "$c" ]]; then
+        PAUSE_FLAG=0
+        continue
+    fi
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
-        3) _manage_pubkey_suite ;;
-        4) _manage_yubikey ;;
-        5) _apply_preset ;;
+        3) _set_pubkey_login ;;
+        4) _manage_keys ;;
+        5) _manage_yubikey ;;
+        6) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选项" ;;
     esac
-    echo
-    read -rp "按 Enter 返回菜单..." _
+    if [[ "$PAUSE_FLAG" == "1" ]]; then
+        echo
+        read -rp "按 Enter 返回菜单..." _
+    fi
 done
