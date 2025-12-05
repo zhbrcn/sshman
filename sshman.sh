@@ -1,15 +1,16 @@
 #!/bin/bash
 # ==============================================================================
 # sshman - SSH 登录配置管理工具 (个人专用版)
-# 版本: v1.0.2
+# 版本: v1.0.3
 # 作者: 代码助手
 # 说明: 本脚本仅供个人服务器管理使用，请勿在未授权的生产环境中分发。
+# 更新: 增加了 sshd -t 语法预检，防止配置错误导致服务器失联。
 # ==============================================================================
 
 set -e
 
 # --- [ 全局配置变量 ] ---
-VERSION="v1.0.2"
+VERSION="v1.0.3"
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
@@ -32,23 +33,42 @@ RESET="\033[0m"
 # --- [ 环境自检 ] ---
 [[ $EUID -ne 0 ]] && { echo -e "${RED}[错误] 请使用 sudo 运行此脚本。${RESET}"; exit 1; }
 mkdir -p "$BACKUP_DIR"
+# 自动探测 SSH 服务名
 systemctl list-unit-files | grep -q "^ssh.service" && SSH_SERVICE="ssh" || SSH_SERVICE="sshd"
+# 自动探测 sshd 二进制路径 (用于语法检查)
+SSHD_BIN=$(which sshd 2>/dev/null || echo "/usr/sbin/sshd")
 
 # --- [ 核心工具函数 ] ---
 
-_flash_msg() { sleep 1.2; } # 操作后短暂亦留
+_flash_msg() { sleep 1.2; }
 
 _backup_file() {
     local file=$1
     [[ -f "$file" ]] && cp "$file" "$BACKUP_DIR/$(basename "$file").bak.$(date +%F-%H%M%S)"
 }
 
+# [安全增强] 重启前强制检查语法
 _restart_ssh() {
-    echo -e "${YELLOW}[*] 正在应用更改 (重启 SSH)...${RESET}"
+    echo -e "${YELLOW}[*] 正在验证配置文件语法 (sshd -t)...${RESET}"
+    
+    # 如果 sshd -t 返回非零值，说明配置有错
+    if ! "$SSHD_BIN" -t -f "$SSH_CONFIG"; then
+        echo -e "${RED}======================================================${RESET}"
+        echo -e "${RED}[危] 配置文件语法错误！已拦截重启操作！${RESET}"
+        echo -e "${RED}      如果现在重启，你可能会无法连接服务器！${RESET}"
+        echo -e "${RED}======================================================${RESET}"
+        echo -e "${YELLOW}错误详情如下:${RESET}"
+        "$SSHD_BIN" -t -f "$SSH_CONFIG" || true
+        echo ""
+        read -rp "按回车键保留当前状态并返回..."
+        return 1
+    fi
+
+    echo -e "${YELLOW}[*] 语法检查通过，正在重启服务...${RESET}"
     if systemctl restart "$SSH_SERVICE"; then
         echo -e "${GREEN}[OK] 服务重启成功${RESET}"
     else
-        echo -e "${RED}[!] 重启失败，请检查配置文件: sshd -t${RESET}"
+        echo -e "${RED}[!] 重启命令执行失败，请手动检查: systemctl status $SSH_SERVICE${RESET}"
     fi
 }
 
@@ -64,6 +84,8 @@ _update_conf() {
 _remove_conf() { sed -i "/^${1}\\b/d" "${2:-$SSH_CONFIG}"; }
 
 _get_conf() {
+    # 使用 awk 提取配置值，处理可能存在的注释行或空行风险
+    # 这里的 grep 管道设计能确保即使未找到也不会导致 set -e 退出
     local val
     val=$(grep -E "^${1}\\b" "$SSH_CONFIG" | tail -n1 | awk '{print $2}')
     echo "${val:-$2}"
@@ -87,32 +109,27 @@ _fmt_yubi() {
     fi
 }
 
-# 检查当前配置是否符合任一预设，并返回指示字符串
 _check_preset_status() {
     local root_st pass_st pub_st
     root_st=$(_get_conf "PermitRootLogin" "yes")
     pass_st=$(_get_conf "PasswordAuthentication" "yes")
     pub_st=$(_get_conf "PubkeyAuthentication" "yes")
     
-    # 注意：此处返回不带前导空格的字符串，由主循环控制对齐
     # 1) 加固生产
     if [[ "$root_st" == "no" ]] && [[ "$pass_st" == "no" ]] && [[ "$pub_st" == "yes" ]]; then
         echo -e "[${GREEN}已配置：加固生产${RESET}]"
         return
     fi
-
     # 2) 日常开发
     if [[ "$root_st" == "prohibit-password" ]] && [[ "$pass_st" == "yes" ]] && [[ "$pub_st" == "yes" ]]; then
         echo -e "[${YELLOW}已配置：日常开发${RESET}]"
         return
     fi
-
     # 3) 临时开放
     if [[ "$root_st" == "yes" ]] && [[ "$pass_st" == "yes" ]] && [[ "$pub_st" == "yes" ]]; then
         echo -e "[${RED}已配置：临时开放${RESET}]"
         return
     fi
-
     echo ""
 }
 
@@ -253,30 +270,21 @@ while true; do
     echo -e " sshman - SSH 管理器 ${VERSION}"
     echo -e "${BLUE}==========================================${RESET}"
     
-    # 实时获取状态
     r=$(_get_conf "PermitRootLogin" "yes")
     p=$(_get_conf "PasswordAuthentication" "yes")
     k=$(_get_conf "PubkeyAuthentication" "yes")
-    
-    # 获取预设匹配状态和密钥数量
     PRESET_STATUS=$(_check_preset_status)
     KEY_COUNT=0
     [[ -f "$AUTHORIZED_KEYS" ]] && KEY_COUNT=$(wc -l < "$AUTHORIZED_KEYS")
 
-    # 对齐优化：确保所有方括号起始位置一致 (中文占2字符宽度，英文1)
-    # 密码登录(8) + 2空格 = 10
-    # YubiKey(7) + 3空格 = 10
     printf " 1) 密码登录  [%s]\n" "$(_fmt_yn "$p")"
     printf " 2) 公钥登录  [%s]\n" "$(_fmt_yn "$k")"
     printf " 3) Root权限  [%s]\n" "$(_fmt_root "$r")"
     printf " 4) YubiKey   [%s]\n" "$(_fmt_yubi)"
     
-    # 统一使用方括号，并手动补齐空格以对齐
-    # 密钥管理(8) + 2空格 = 10
+    # 统一视觉对齐：功能名占位约为10个字符宽度
     echo   " 5) 密钥管理  [${KEY_COUNT}个公钥]"
     
-    # 推荐预设(8) + 2空格 = 10
-    # 如果有匹配状态，则显示 [状态]，否则该行末尾为空
     if [[ -n "$PRESET_STATUS" ]]; then
         echo -e " 6) ${YELLOW}推荐预设${RESET}  ${PRESET_STATUS}"
     else
