@@ -16,6 +16,7 @@ YUBI_SECRET_KEY="//EomrFfWNk8fWV/6h7IW8pgs9Y="
 YUBI_LAST_MODE="pass" # 记住上次选择的模式，默认 2FA
 
 mkdir -p "$BACKUP_DIR"
+PAUSE_FLAG=1
 
 _detect_ssh_service() {
     if systemctl list-unit-files | grep -q "^ssh.service"; then
@@ -215,7 +216,7 @@ _render_menu() {
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf " %-4s %-22s %b\n" "$1" "$2" "$3"
+        printf " %-4s %-24s %b\n" "$1" "$2" "$3"
     }
 
     clear
@@ -289,6 +290,7 @@ _manage_keys() {
     local a
     a=$(_read_choice "请选择" "Esc/0 返回")
     if [[ -z "$a" ]]; then
+        PAUSE_FLAG=0
         return
     fi
 
@@ -403,6 +405,7 @@ _choose_yubikey_mode() {
     local m
     m=$(_read_choice "请选择" "Esc/0 返回")
     if [[ -z "$m" ]]; then
+        PAUSE_FLAG=0
         return
     fi
 
@@ -410,7 +413,7 @@ _choose_yubikey_mode() {
         1) _disable_yubikey ;;
         2) _enable_yubikey_mode otp ;;
         3) _enable_yubikey_mode pass ;;
-        0) return ;;
+        0) PAUSE_FLAG=0; return ;;
         *) echo "无效选项" ;;
     esac
 }
@@ -465,6 +468,7 @@ _apply_preset() {
     local p
     p=$(_read_choice "选择预设" "Esc/0 返回")
     if [[ -z "$p" ]]; then
+        PAUSE_FLAG=0
         return
     fi
 
@@ -507,9 +511,11 @@ _apply_preset() {
 
 _check_utf8_locale
 while true; do
+    PAUSE_FLAG=1
     _render_menu
     c=$(_read_choice "请选择操作" "")
     if [[ -z "$c" ]]; then
+        PAUSE_FLAG=0
         continue
     fi
     case $c in
