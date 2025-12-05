@@ -13,6 +13,7 @@ AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
 HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
 YUBI_CLIENT_ID="85975"
 YUBI_SECRET_KEY="//EomrFfWNk8fWV/6h7IW8pgs9Y="
+YUBI_LAST_MODE="pass" # 记住上次选择的模式，默认 2FA
 
 mkdir -p "$BACKUP_DIR"
 PAUSE_FLAG=1
@@ -107,55 +108,76 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" first rest line choice
+    local prompt="$1" back_hint="$2" hint_suffix="" key choice=""
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
-    # 读取首个按键；支持 Esc 直接返回，无需回车
-    if ! IFS= read -rs -n1 first; then
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
+    while true; do
+        if ! IFS= read -rs -n1 key 2>/dev/null; then
+            printf "\n" >&2
+            echo ""
+            return 0
+        fi
 
-    # 按 Esc 返回上一层
-    if [[ "$first" == $'\e' ]]; then
-        # 丢弃后续残留输入（如终端可能附带的 [ 字符）
-        while IFS= read -rs -n1 -t 0.01 rest 2>/dev/null; do
-            [[ "$rest" == $'\n' ]] && break
+        # Esc 直接返回
+        if [[ "$key" == $'\e' ]]; then
+            printf "\n" >&2
+            echo ""
+            return 0
+        fi
+
+        # 回车直接返回
+        if [[ "$key" == $'\n' ]]; then
+            printf "\n" >&2
+            echo ""
+            return 0
+        fi
+
+        # 退格
+        if [[ "$key" == $'\177' ]]; then
+            if [[ -n "$choice" ]]; then
+                choice=${choice::-1}
+                printf '\b \b' >&2
+            fi
+            continue
+        fi
+
+        # 普通字符
+        choice+="$key"
+        printf "%s" "$key" >&2
+
+        # 继续读这一行，直到回车或 Esc
+        while IFS= read -rs -n1 key 2>/dev/null; do
+            if [[ "$key" == $'\e' ]]; then
+                printf "\n" >&2
+                echo ""
+                return 0
+            fi
+            if [[ "$key" == $'\n' ]]; then
+                printf "\n" >&2
+                choice=${choice//$'\r'/}
+                choice=${choice//$'\n'/}
+                choice="${choice#"${choice%%[![:space:]]*}"}"
+                choice="${choice%"${choice##*[![:space:]]}"}"
+                if [[ -n "$back_hint" && "$choice" == "0" ]]; then
+                    echo ""
+                    return 0
+                fi
+                echo "$choice"
+                return 0
+            fi
+            if [[ "$key" == $'\177' ]]; then
+                if [[ -n "$choice" ]]; then
+                    choice=${choice::-1}
+                    printf '\b \b' >&2
+                fi
+                continue
+            fi
+            choice+="$key"
+            printf "%s" "$key" >&2
         done
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
-
-    # 用户直接回车视为返回
-    if [[ -z "$first" || "$first" == $'\n' ]]; then
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
-
-    # 显示已输入字符，再读取本行剩余输入（需要回车确认）
-    printf "%s" "$first" >&2
-    if IFS= read -r line; then
-        choice="$first$line"
-    else
-        choice="$first"
-    fi
-
-    choice=${choice//$'\r'/}
-    choice=${choice//$'\n'/}
-    choice="${choice#"${choice%%[![:space:]]*}"}"
-    choice="${choice%"${choice##*[![:space:]]}"}"
-    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
-    printf "\n" >&2
-    echo "$choice"
+    done
 }
 
 _status_colors() {
@@ -246,76 +268,57 @@ _render_menu() {
     printf " sshman - SSH 登录管理器 (UTF-8)\n"
     printf " %b\n" "$(_blue_text "$sys_info")"
     echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1)" "root 登录" "$root_status"
-    menu_line "2)" "密码登录" "$password_status"
-    menu_line "3)" "公钥登录开关" "$pubkey_status"
-    menu_line "4)" "authorized_keys" "$auth_file_status"
-    menu_line "5)" "YubiKey" "$yubi_display"
-    menu_line "6)" "推荐预设" "$authm_status"
+    menu_line "1)" "root 登录 (切换)" "$root_status"
+    menu_line "2)" "密码登录 (切换)" "$password_status"
+    menu_line "3)" "公钥登录 (切换)" "$pubkey_status"
+    menu_line "4)" "YubiKey 开关 (切换)" "$yubi_display"
+    menu_line "5)" "authorized_keys" "$auth_file_status"
+    menu_line "6)" "YubiKey 模式" "$yubi_display"
+    menu_line "7)" "推荐预设" "$authm_status"
     echo -e "${BLUE}${divider}${RESET}"
     echo " 0) 退出（Esc/0 返回）"
     echo -e "${BLUE}${border}${RESET}"
 }
 
 _set_root_login() {
-    _section_header "root 登录" "当前：$(_status_root_login)"
-    echo "1) 允许 root 登录"
-    echo "2) 允许 root 仅限密钥"
-    echo "3) 禁止 root 登录"
-    local a
-    a=$(_read_choice "请选择" "Esc/0 返回")
-    if [[ -z "$a" ]]; then
-        PAUSE_FLAG=0
-        return
-    fi
-
-    _backup_file "$SSH_CONFIG"
-    case $a in
-        1) _update_directive "PermitRootLogin" "yes" ;;
-        2) _update_directive "PermitRootLogin" "prohibit-password" ;;
-        3) _update_directive "PermitRootLogin" "no" ;;
-        *) echo "无效选项" ; return ;;
+    local current next
+    current=$(_get_directive PermitRootLogin "yes")
+    case $current in
+        yes) next="prohibit-password" ;;
+        prohibit-password) next="no" ;;
+        *) next="yes" ;;
     esac
+    _backup_file "$SSH_CONFIG"
+    _update_directive "PermitRootLogin" "$next"
+    echo "[OK] root 登录已切换为: $(_format_root_login "$next")"
     _restart_ssh
 }
 
 _set_password_login() {
-    _section_header "密码登录" "当前：$(_status_password_login)"
-    echo "1) 开启密码登录"
-    echo "2) 关闭密码登录"
-    local a
-    a=$(_read_choice "请选择" "Esc/0 返回")
-    if [[ -z "$a" ]]; then
-        PAUSE_FLAG=0
-        return
-    fi
-
-    _backup_file "$SSH_CONFIG"
-    if [[ "$a" == "1" ]]; then
-        _update_directive "PasswordAuthentication" "yes"
+    local current next
+    current=$(_get_directive PasswordAuthentication "yes")
+    if [[ "$current" == "yes" ]]; then
+        next="no"
     else
-        _update_directive "PasswordAuthentication" "no"
+        next="yes"
     fi
+    _backup_file "$SSH_CONFIG"
+    _update_directive "PasswordAuthentication" "$next"
+    echo "[OK] 密码登录已切换为: $(_format_on_off "$next")"
     _restart_ssh
 }
 
 _set_pubkey_login() {
-    _section_header "公钥登录" "当前：$(_status_pubkey_login)"
-    echo "1) 开启公钥登录"
-    echo "2) 关闭公钥登录"
-    local a
-    a=$(_read_choice "请选择" "Esc/0 返回")
-    if [[ -z "$a" ]]; then
-        PAUSE_FLAG=0
-        return
-    fi
-
-    _backup_file "$SSH_CONFIG"
-    if [[ "$a" == "1" ]]; then
-        _update_directive "PubkeyAuthentication" "yes"
+    local current next
+    current=$(_get_directive PubkeyAuthentication "yes")
+    if [[ "$current" == "yes" ]]; then
+        next="no"
     else
-        _update_directive "PubkeyAuthentication" "no"
+        next="yes"
     fi
+    _backup_file "$SSH_CONFIG"
+    _update_directive "PubkeyAuthentication" "$next"
+    echo "[OK] 公钥登录已切换为: $(_format_on_off "$next")"
     _restart_ssh
 }
 
@@ -458,28 +461,17 @@ _choose_yubikey_mode() {
     esac
 }
 
-_manage_yubikey() {
-    while true; do
-        _section_header "YubiKey 管理" "状态：$(_status_yubikey_mode)"
-        echo "当前状态：$(_status_yubikey_mode)"
-        echo "1) 配置/切换 YubiKey 模式"
-        echo "2) 禁用/恢复 YubiKey"
-        echo "0) 返回"
-        local a
-        a=$(_read_choice "请选择" "Esc/0 返回")
-        if [[ -z "$a" ]]; then
-            PAUSE_FLAG=0
-            return
-        fi
-
-        case $a in
-            1) _choose_yubikey_mode ;;
-            2) _disable_yubikey ;;
-            0) PAUSE_FLAG=0; return ;;
-            *) echo "无效选项" ;;
-        esac
-        echo
-    done
+_toggle_yubikey() {
+    local state mode
+    state=$(_status_yubikey_mode)
+    if [[ "$state" == "未启用" ]]; then
+        mode=${YUBI_LAST_MODE:-pass}
+        echo "[*] 正在启用 YubiKey（模式：$mode）..."
+        _enable_yubikey_mode "$mode"
+    else
+        echo "[*] 正在禁用 YubiKey..."
+        _disable_yubikey
+    fi
 }
 
 _enable_yubikey_mode() {
@@ -494,6 +486,7 @@ _enable_yubikey_mode() {
     _update_directive "ChallengeResponseAuthentication" "yes"
     _ensure_kbdinteractive
     _update_directive "AuthenticationMethods" "keyboard-interactive"
+    YUBI_LAST_MODE="$mode"
     if [[ "$mode" == "otp" ]]; then
         _update_directive "PasswordAuthentication" "no"
         _update_directive "PubkeyAuthentication" "no"
@@ -572,9 +565,10 @@ while true; do
         1) _set_root_login ;;
         2) _set_password_login ;;
         3) _set_pubkey_login ;;
-        4) _manage_keys ;;
-        5) _manage_yubikey ;;
-        6) _apply_preset ;;
+        4) _toggle_yubikey ;;
+        5) _manage_keys ;;
+        6) _choose_yubikey_mode ;;
+        7) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选项" ;;
     esac
