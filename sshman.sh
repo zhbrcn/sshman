@@ -1,6 +1,9 @@
 #!/bin/bash
-# sshman - SSH 鐧诲綍绠＄悊鑴氭湰 (涓枃浜や簰)
-# 闇€瑕佸湪 UTF-8 缁堢杩愯锛屽惁鍒欒彍鍗曚細涔辩爜銆?
+# sshman - SSH 登录管理脚本 (UTF-8)
+# 在 UTF-8 终端运行，提供交互式菜单管理 sshd 配置。
+
+set -euo pipefail
+
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
@@ -12,7 +15,7 @@ YUBI_SECRET_KEY="//EomrFfWNk8fWV/6h7IW8pgs9Y="
 
 mkdir -p "$BACKUP_DIR"
 
-# 鑷姩妫€娴?ssh/sshd 鏈嶅姟鍚?_detect_ssh_service() {
+_detect_ssh_service() {
     if systemctl list-unit-files | grep -q "^ssh.service"; then
         echo "ssh"
     else
@@ -24,16 +27,17 @@ SSH_SERVICE=$(_detect_ssh_service)
 
 _backup_file() {
     local file=$1
-    local name=$(basename "$file")
+    local name
+    name=$(basename "$file")
     cp "$file" "$BACKUP_DIR/${name}.bak.$(date +%F-%H%M%S)"
 }
 
 _restart_ssh() {
-    echo "[*] 姝ｅ湪閲嶅惎 SSH 鏈嶅姟..."
+    echo "[*] 正在重启 SSH 服务..."
     if systemctl restart "$SSH_SERVICE"; then
-        echo "[鉁揮 SSH 閲嶅惎鎴愬姛"
+        echo "[✔] SSH 重启成功"
     else
-        echo "[!] SSH 閲嶅惎澶辫触锛岃鎵嬪姩妫€鏌ワ紒"
+        echo "[!] SSH 重启失败，请手动检查。"
     fi
 }
 
@@ -41,9 +45,9 @@ _check_utf8_locale() {
     local charmap
     charmap=$(locale charmap 2>/dev/null || echo "")
     if [[ "$charmap" != "UTF-8" && "$LANG" != *"UTF-8"* && "$LC_CTYPE" != *"UTF-8"* ]]; then
-        echo "[!] 妫€娴嬪埌褰撳墠缁堢缂栫爜涓?${charmap:-鏈煡}锛岃彍鍗曢渶瑕?UTF-8 鎵嶈兘姝ｅ父鏄剧ず銆?
-        echo "    寤鸿鍏堟墽琛? export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
-        read -rp "缁х画鍙兘鍑虹幇涔辩爜锛屾寜 Enter 缁х画锛屾垨 Ctrl+C 缁堟..." _
+        echo "[!] 当前终端编码为 ${charmap:-未知}，菜单需要 UTF-8 才能正常显示。"
+        echo "    建议先运行: export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
+        read -rp "可能出现乱码，按 Enter 继续或 Ctrl+C 终止..." _
     fi
 }
 
@@ -62,7 +66,6 @@ _remove_directive() {
 }
 
 _ensure_kbdinteractive() {
-    # 纭繚閿洏浜や簰寮忚璇佸紑鍚紝鍚﹀垯 YubiKey OTP 涓嶄細琚?sshd 鎻愪緵
     _update_directive "KbdInteractiveAuthentication" "yes"
 }
 
@@ -74,45 +77,41 @@ _get_directive() {
 }
 
 _format_on_off() {
-    local flag=$1
-    case $flag in
-        yes) echo "宸插紑鍚? ;;
-        no) echo "宸插叧闂? ;;
-        *) echo "$flag" ;;
+    case $1 in
+        yes) echo "已开启" ;;
+        no) echo "已关闭" ;;
+        *) echo "$1" ;;
     esac
 }
 
 _format_root_login() {
     case $1 in
-        yes) echo "root 鐧诲綍: 鍏佽" ;;
-        prohibit-password) echo "root 鐧诲綍: 浠呭瘑閽? ;;
-        no) echo "root 鐧诲綍: 绂佹" ;;
-        *) echo "root 鐧诲綍: 鏈缃? ;;
+        yes) echo "root 登录: 允许" ;;
+        prohibit-password) echo "root 登录: 仅密钥" ;;
+        no) echo "root 登录: 禁止" ;;
+        *) echo "root 登录: 未设置" ;;
     esac
 }
 
 _format_auth_methods() {
-    local val=$1
-    case $val in
-        "keyboard-interactive") echo "璁よ瘉鏂瑰紡: 浠呴敭鐩樹氦浜?(閫傜敤浜?YubiKey)" ;;
-        榛樿) echo "璁よ瘉鏂瑰紡: 榛樿" ;;
-        *) echo "璁よ瘉鏂瑰紡: $val" ;;
+    case $1 in
+        "keyboard-interactive") echo "认证方式: 键盘交互 (YubiKey)" ;;
+        默认) echo "认证方式: 默认" ;;
+        *) echo "认证方式: $1" ;;
     esac
 }
 
 _read_choice() {
     local prompt="$1" back_hint="$2" hint_suffix="" choice
 
-    [ -n "$back_hint" ] && hint_suffix=" (${back_hint})"
+    [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix"
     if ! IFS= read -r choice; then
         echo
         return 1
     fi
-    # strip CR/LF that may come from different terminals
     choice=${choice//$'\r'/}
     choice=${choice//$'\n'/}
-    # trim surrounding whitespace
     choice="${choice#"${choice%%[![:space:]]*}"}"
     choice="${choice%"${choice##*[![:space:]]}"}"
     if [[ -z "$choice" || "$choice" == $'\e' ]]; then
@@ -142,30 +141,24 @@ _section_header() {
     bar=$(printf '%*s' 60 "" | tr ' ' '-')
     echo -e "${BLUE}${bar}${RESET}"
     printf " %s" "$title"
-    [ -n "$info" ] && printf " - %b" "$(_blue_text "$info")"
+    [[ -n "$info" ]] && printf " - %b" "$(_blue_text "$info")"
     echo
     echo -e "${BLUE}${bar}${RESET}"
 }
 
 _status_root_login() {
-    local raw=$(_get_directive PermitRootLogin 鏈缃?
-    case $raw in
-        yes) echo "鍏佽" ;;
-        prohibit-password) echo "浠呭瘑閽? ;;
-        no) echo "绂佹" ;;
-        *) echo "鏈缃? ;;
-    esac
+    _format_root_login "$(_get_directive PermitRootLogin 未设置)"
 }
 
-_status_password_login() { _format_on_off "$(_get_directive PasswordAuthentication 鏈缃?"; }
-_status_pubkey_login() { _format_on_off "$(_get_directive PubkeyAuthentication 鏈缃?"; }
+_status_password_login() { _format_on_off "$(_get_directive PasswordAuthentication 未设置)"; }
+_status_pubkey_login() { _format_on_off "$(_get_directive PubkeyAuthentication 未设置)"; }
 
 _status_auth_methods() {
-    local authm=$(_get_directive AuthenticationMethods 榛樿)
-    if [ "$authm" = "榛樿" ]; then
-        echo "榛樿"
-    elif [ "$authm" = "keyboard-interactive" ]; then
-        echo "閿洏浜や簰"
+    local authm=$(_get_directive AuthenticationMethods 默认)
+    if [[ "$authm" == "默认" ]]; then
+        echo "默认"
+    elif [[ "$authm" == "keyboard-interactive" ]]; then
+        echo "键盘交互"
     else
         echo "$authm"
     fi
@@ -173,23 +166,23 @@ _status_auth_methods() {
 
 _status_yubikey_mode() {
     if ! grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "鏈惎鐢?
+        echo "未启用"
         return
     fi
     if grep -q "^@include common-auth" "$PAM_SSHD"; then
-        echo "YubiKey + 瀵嗙爜"
+        echo "YubiKey + 密码"
     else
-        echo "浠?YubiKey"
+        echo "仅 YubiKey"
     fi
 }
 
 _authorized_keys_label() {
-    if [ -f "$AUTHORIZED_KEYS" ]; then
+    if [[ -f "$AUTHORIZED_KEYS" ]]; then
         local count
         count=$(wc -l < "$AUTHORIZED_KEYS")
-        echo "宸插瓨鍦?(${count} 鏉?"
+        echo "已存在 (${count} 条)"
     else
-        echo "鏈垱寤?
+        echo "未创建"
     fi
 }
 
@@ -198,18 +191,17 @@ _render_menu() {
     local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status yubi_display sys_info
     root_status=$(_blue_text "$(_status_root_login)")
     password_status=$(_blue_text "$(_status_password_login)")
-    pubkey_status=$(_status_pubkey_login)
     auth_file_status=$(_authorized_keys_label)
-    pubkey_status=$(_blue_text "$pubkey_status / $auth_file_status")
+    pubkey_status=$(_blue_text "$(_status_pubkey_login) / $auth_file_status")
     authm_status=$(_blue_text "$(_status_auth_methods)")
     yubi_mode=$(_status_yubikey_mode)
-    if [ "$yubi_mode" = "鏈惎鐢? ]; then
-        yubi_switch_status="褰撳墠: 宸茬鐢?
+    if [[ "$yubi_mode" == "未启用" ]]; then
+        yubi_switch_status="当前: 已禁用"
     else
-        yubi_switch_status="褰撳墠: 宸插惎鐢?
+        yubi_switch_status="当前: 已启用"
     fi
     yubi_display=$(_blue_text "$yubi_mode / $yubi_switch_status")
-    sys_info="绯荤粺: $(lsb_release -ds 2>/dev/null || echo Linux) | 鏈嶅姟: $SSH_SERVICE"
+    sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
@@ -219,46 +211,46 @@ _render_menu() {
 
     clear
     echo -e "${BLUE}${border}${RESET}"
-    printf " sshman - SSH 鐧诲綍绠＄悊 (UTF-8)\n"
+    printf " sshman - SSH 登录管理 (UTF-8)\n"
     printf " %b\n" "$(_blue_text "$sys_info")"
     echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1)" "root 鐧诲綍" "$root_status"
-    menu_line "2)" "瀵嗙爜鐧诲綍" "$password_status"
-    menu_line "3)" "鍏挜鐧诲綍涓庡瘑閽? "$pubkey_status"
+    menu_line "1)" "root 登录" "$root_status"
+    menu_line "2)" "密码登录" "$password_status"
+    menu_line "3)" "公钥登录与密钥" "$pubkey_status"
     menu_line "4)" "YubiKey" "$yubi_display"
-    menu_line "5)" "濂楃敤棰勮" "$authm_status"
+    menu_line "5)" "推荐预设" "$authm_status"
     echo -e "${BLUE}${divider}${RESET}"
-    echo " 0) 閫€鍑?(Esc/0 杩斿洖)"
+    echo " 0) 退出 (Esc/0 返回)"
     echo -e "${BLUE}${border}${RESET}"
 }
 
 _set_root_login() {
-    _section_header "root 鐧诲綍" "褰撳墠: $(_status_root_login)"
-    echo "1) 鍏佽 root 鐧诲綍"
-    echo "2) 浠呭厑璁?root 瀵嗛挜"
-    echo "3) 绂佹 root 鐧诲綍"
+    _section_header "root 登录" "当前: $(_status_root_login)"
+    echo "1) 允许 root 登录"
+    echo "2) 仅允许 root 密钥"
+    echo "3) 禁止 root 登录"
     local a
-    a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
     case $a in
         1) _update_directive "PermitRootLogin" "yes" ;;
         2) _update_directive "PermitRootLogin" "prohibit-password" ;;
         3) _update_directive "PermitRootLogin" "no" ;;
-        *) echo "鏃犳晥閫夋嫨" ; return ;;
+        *) echo "无效选择" ; return ;;
     esac
     _restart_ssh
 }
 
 _set_password_login() {
-    _section_header "瀵嗙爜鐧诲綍" "褰撳墠: $(_status_password_login)"
-    echo "1) 鍚敤瀵嗙爜鐧诲綍"
-    echo "2) 绂佺敤瀵嗙爜鐧诲綍"
+    _section_header "密码登录" "当前: $(_status_password_login)"
+    echo "1) 启用密码登录"
+    echo "2) 禁用密码登录"
     local a
-    a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
-    if [ "$a" = "1" ]; then
+    if [[ "$a" == "1" ]]; then
         _update_directive "PasswordAuthentication" "yes"
     else
         _update_directive "PasswordAuthentication" "no"
@@ -267,14 +259,14 @@ _set_password_login() {
 }
 
 _set_pubkey_login() {
-    _section_header "鍏挜鐧诲綍" "褰撳墠: $(_status_pubkey_login)"
-    echo "1) 鍚敤鍏挜鐧诲綍"
-    echo "2) 绂佺敤鍏挜鐧诲綍"
+    _section_header "公钥登录" "当前: $(_status_pubkey_login)"
+    echo "1) 启用公钥登录"
+    echo "2) 禁用公钥登录"
     local a
-    a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     _backup_file "$SSH_CONFIG"
-    if [ "$a" = "1" ]; then
+    if [[ "$a" == "1" ]]; then
         _update_directive "PubkeyAuthentication" "yes"
     else
         _update_directive "PubkeyAuthentication" "no"
@@ -286,79 +278,79 @@ _manage_keys() {
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
 
-    _section_header "authorized_keys" "鐘舵€? $(_authorized_keys_label)"
-    echo "1) 鏌ョ湅瀵嗛挜"
-    echo "2) 绮樿创鍏挜"
-    echo "3) 浠庢枃浠跺鍏ュ叕閽?(渚嬪 ~/.ssh/id_rsa.pub)"
-    echo "4) 鍒犻櫎鎸囧畾琛岀殑鍏挜"
+    _section_header "authorized_keys" "状态: $(_authorized_keys_label)"
+    echo "1) 查看密钥"
+    echo "2) 手动追加公钥"
+    echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
+    echo "4) 删除指定行的公钥"
     local a
-    a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+    a=$(_read_choice "请选择" "Esc/0 返回") || return
 
     case $a in
         1)
-            if [ -f "$AUTHORIZED_KEYS" ]; then
+            if [[ -f "$AUTHORIZED_KEYS" ]]; then
                 nl -ba "$AUTHORIZED_KEYS"
             else
-                echo "灏氭湭鍒涘缓 authorized_keys"
+                echo "尚未创建 authorized_keys"
             fi
             ;;
         2)
-            read -rp "璇风矘璐村叕閽? " key
+            read -rp "请输入公钥: " key
             echo "$key" >> "$AUTHORIZED_KEYS"
             chmod 600 "$AUTHORIZED_KEYS"
-            echo "[鉁揮 鍏挜宸叉坊鍔?
+            echo "[✔] 公钥已添加"
             ;;
         3)
-            read -rp "璇疯緭鍏ュ叕閽ユ枃浠惰矾寰?榛樿: $HOME/.ssh/id_rsa.pub): " path
+            read -rp "请输入公钥文件路径 (默认: $HOME/.ssh/id_rsa.pub): " path
             path=${path:-$HOME/.ssh/id_rsa.pub}
-            if [ -f "$path" ]; then
+            if [[ -f "$path" ]]; then
                 cat "$path" >> "$AUTHORIZED_KEYS"
                 chmod 600 "$AUTHORIZED_KEYS"
-                echo "[鉁揮 宸插鍏?$path"
+                echo "[✔] 已导入 $path"
             else
-                echo "鏈壘鍒版枃浠? $path"
+                echo "未找到文件: $path"
             fi
             ;;
         4)
-            if [ ! -f "$AUTHORIZED_KEYS" ]; then
-                echo "灏氭湭鍒涘缓 authorized_keys"; return
+            if [[ ! -f "$AUTHORIZED_KEYS" ]]; then
+                echo "尚未创建 authorized_keys"; return
             fi
             local -a numbered_lines=()
             mapfile -t numbered_lines < <(nl -ba "$AUTHORIZED_KEYS")
-            if [ ${#numbered_lines[@]} -eq 0 ]; then
-                echo "authorized_keys 涓虹┖锛屾棤闇€鍒犻櫎"; return
+            if [[ ${#numbered_lines[@]} -eq 0 ]]; then
+                echo "authorized_keys 为空，无需删除"; return
             fi
             printf "%s\n" "${numbered_lines[@]}"
             local line max_line
             max_line=$(printf '%s\n' "${numbered_lines[@]}" | tail -n1 | awk '{print $1}')
-            read -rp "杈撳叆瑕佸垹闄ょ殑琛屽彿: " line
+            read -rp "输入要删除的行号: " line
             if [[ ! "$line" =~ ^[0-9]+$ ]]; then
-                echo "琛屽彿蹇呴』涓烘暟瀛?; return
+                echo "行号必须为数字"; return
             fi
-            if [ "$line" -lt 1 ] || [ "$line" -gt "$max_line" ]; then
-                echo "琛屽彿瓒呭嚭鑼冨洿 (1-${max_line})"; return
+            if [[ "$line" -lt 1 || "$line" -gt "$max_line" ]]; then
+                echo "行号超出范围 (1-${max_line})"; return
             fi
             sed -i "${line}d" "$AUTHORIZED_KEYS"
-            echo "[鉁揮 宸插垹闄ょ $line 琛?
+            echo "[✔] 已删除第 $line 行"
             ;;
-        *) echo "鏃犳晥閫夋嫨" ;;
+        *) echo "无效选择" ;;
     esac
 }
 
 _manage_pubkey_suite() {
     while true; do
-        _section_header "鍏挜鐧诲綍/瀵嗛挜" "鐧诲綍: $(_status_pubkey_login) | 瀵嗛挜: $(_authorized_keys_label)"
-        echo "1) 璁剧疆鍏挜鐧诲綍寮€鍏?
-        echo "2) 绠＄悊 authorized_keys"
-        echo "0) 杩斿洖"
+        _section_header "公钥登录/密钥" "登录: $(_status_pubkey_login) | 密钥: $(_authorized_keys_label)"
+        echo "1) 设置公钥登录开关"
+        echo "2) 管理 authorized_keys"
+        echo "0) 返回"
         local a
-        a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+        a=$(_read_choice "请选择" "Esc/0 返回") || return
 
         case $a in
             1) _set_pubkey_login ;;
             2) _manage_keys ;;
             0) return ;;
-            *) echo "鏃犳晥閫夋嫨" ;;
+            *) echo "无效选择" ;;
         esac
         echo
     done
@@ -366,7 +358,7 @@ _manage_pubkey_suite() {
 
 _ensure_yubico_package() {
     if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
-        echo "[*] 姝ｅ湪瀹夎 libpam-yubico..."
+        echo "[*] 正在安装 libpam-yubico..."
         apt-get update -y && apt-get install -y libpam-yubico
     fi
 }
@@ -380,70 +372,71 @@ _write_yubikey_authfile() {
 
 _write_pam_block() {
     local mode=$1
-    cat > "$PAM_SSHD" <<EOF
-# PAM 閰嶇疆鐢?sshman 绠＄悊
+    cat > "$PAM_SSHD" <<'PAMCFG'
+# PAM 配置由 sshman 管理
 auth    required                        pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless
-EOF
+PAMCFG
 
-    if [ "$mode" = "pass" ]; then
-        cat >> "$PAM_SSHD" <<'EOF'
+    if [[ "$mode" == "pass" ]]; then
+        cat >> "$PAM_SSHD" <<'PAMCFG'
 @include common-auth
-EOF
+PAMCFG
     fi
 
-    cat >> "$PAM_SSHD" <<'EOF'
+    cat >> "$PAM_SSHD" <<'PAMCFG'
 account include common-account
 password include common-password
 session include common-session
 session include common-session-noninteractive
-EOF
+PAMCFG
 }
 
 _disable_yubikey() {
-    local skip_restart=$1
+    local skip_restart=${1:-}
     _backup_file "$PAM_SSHD"
-    cat > "$PAM_SSHD" <<'EOF'
-# PAM 閰嶇疆鐢?sshman 閲嶇疆涓洪粯璁?@include common-auth
+    cat > "$PAM_SSHD" <<'PAMCFG'
+# PAM 配置由 sshman 重置为默认
+@include common-auth
 account include common-account
 password include common-password
 session include common-session
 session include common-session-noninteractive
-EOF
-    echo "[鉁揮 宸茬鐢?YubiKey 鐧诲綍骞舵仮澶嶉粯璁?PAM"
+PAMCFG
+    echo "[✔] 已禁用 YubiKey 登录并恢复默认 PAM"
     _remove_directive "AuthenticationMethods"
-    [ "$skip_restart" = "skip" ] || _restart_ssh
+    [[ "$skip_restart" == "skip" ]] || _restart_ssh
 }
 
 _choose_yubikey_mode() {
-    _section_header "YubiKey 妯″紡" "褰撳墠: $(_status_yubikey_mode)"
-    echo "1) 浠?YubiKey OTP (鍏抽棴瀵嗙爜)"
-    echo "2) YubiKey + 瀵嗙爜 (鍙屽洜瀛?"
-    echo "0) 鍙栨秷"
+    _section_header "YubiKey 模式" "当前: $(_status_yubikey_mode)"
+    echo "1) 仅使用 YubiKey OTP (关闭密码)"
+    echo "2) YubiKey + 密码 (双因素)"
+    echo "0) 取消"
     local m
-    m=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+    m=$(_read_choice "请选择" "Esc/0 返回") || return
 
     case $m in
         1) _enable_yubikey_mode otp ;;
         2) _enable_yubikey_mode pass ;;
         0) return ;;
-        *) echo "鏃犳晥閫夋嫨" ;;
+        *) echo "无效选择" ;;
     esac
 }
 
 _manage_yubikey() {
     while true; do
-        _section_header "YubiKey 绠＄悊" "鐘舵€? $(_status_yubikey_mode)"
-        echo "1) 閰嶇疆/鍒囨崲 YubiKey 妯″紡"
-        echo "2) 绂佺敤/鎭㈠ YubiKey"
-        echo "0) 杩斿洖"
+        _section_header "YubiKey 管理" "状态: $(_status_yubikey_mode)"
+        echo "1) 配置/切换 YubiKey 模式"
+        echo "2) 禁用/恢复 YubiKey"
+        echo "0) 返回"
         local a
-        a=$(_read_choice "璇烽€夋嫨" "Esc/0 杩斿洖") || return
+        a=$(_read_choice "请选择" "Esc/0 返回") || return
 
         case $a in
             1) _choose_yubikey_mode ;;
             2) _disable_yubikey ;;
             0) return ;;
-            *) echo "鏃犳晥閫夋嫨" ;;
+            *) echo "无效选择" ;;
         esac
         echo
     done
@@ -460,28 +453,28 @@ _enable_yubikey_mode() {
     _update_directive "ChallengeResponseAuthentication" "yes"
     _ensure_kbdinteractive
     _update_directive "AuthenticationMethods" "keyboard-interactive"
-    if [ "$mode" = "otp" ]; then
+    if [[ "$mode" == "otp" ]]; then
         _update_directive "PasswordAuthentication" "no"
         _update_directive "PubkeyAuthentication" "no"
-        echo "[鉁揮 宸插惎鐢ㄤ粎 YubiKey OTP 鐧诲綍"
+        echo "[✔] 已启用仅 YubiKey OTP 登录"
     else
         _update_directive "PasswordAuthentication" "yes"
         _update_directive "PubkeyAuthentication" "yes"
-        echo "[鉁揮 宸插惎鐢?YubiKey + 瀵嗙爜鍙屽洜瀛?
+        echo "[✔] 已启用 YubiKey + 密码双因素"
     fi
     _restart_ssh
 }
 
 _apply_preset() {
-    local summary="root: $(_status_root_login) | 瀵嗙爜: $(_status_password_login) | 鍏挜: $(_status_pubkey_login) | YubiKey: $(_status_yubikey_mode)"
-    _section_header "濂楃敤棰勮" "$summary"
-    echo "1) 瀹夊叏鐢熶骇锛氱姝?root 鐧诲綍锛岀姝㈠瘑鐮侊紝浠呭叕閽?
-    echo "2) 鏃ュ父寮€鍙戯細鍏佽 root 瀵嗛挜锛屽厑璁稿瘑鐮?
-    echo "3) 鐜╁叿鐜锛歳oot + 瀵嗙爜鍏ㄩ儴寮€鍚?
-    echo "4) 浠?YubiKey OTP锛堢瀵嗙爜/鍏挜锛?
-    echo "5) YubiKey + 瀵嗙爜锛堝弻鍥犲瓙锛屼繚鐣欏叕閽ワ級"
+    local summary="root: $(_status_root_login) | 密码: $(_status_password_login) | 公钥: $(_status_pubkey_login) | YubiKey: $(_status_yubikey_mode)"
+    _section_header "推荐预设" "$summary"
+    echo "1) 安全生产：禁用 root 登录，禁用密码，启用公钥"
+    echo "2) 日常开发：允许 root 密钥，允许密码"
+    echo "3) 临时环境：root + 密码全部开启"
+    echo "4) 仅 YubiKey OTP（禁用密码/公钥）"
+    echo "5) YubiKey + 密码（保留公钥）"
     local p
-    p=$(_read_choice "璇烽€夋嫨棰勮" "Esc/0 杩斿洖") || return
+    p=$(_read_choice "请选择预设" "Esc/0 返回") || return
 
     case $p in
         1)
@@ -515,7 +508,7 @@ _apply_preset() {
             _enable_yubikey_mode pass
             return
             ;;
-        *) echo "鏃犳晥棰勮" ; return ;;
+        *) echo "无效预设" ; return ;;
     esac
     _restart_ssh
 }
@@ -523,7 +516,7 @@ _apply_preset() {
 _check_utf8_locale
 while true; do
     _render_menu
-    c=$(_read_choice "璇烽€夋嫨鎿嶄綔" "") || continue
+    c=$(_read_choice "请选择操作" "") || continue
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
@@ -531,8 +524,8 @@ while true; do
         4) _manage_yubikey ;;
         5) _apply_preset ;;
         0) exit 0 ;;
-        *) echo "鏃犳晥閫夋嫨" ;;
+        *) echo "无效选择" ;;
     esac
     echo
-    read -rp "鎸夊洖杞︾户缁?.." _
+    read -rp "按回车返回菜单..." _
 done
