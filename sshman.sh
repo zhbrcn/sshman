@@ -1,7 +1,7 @@
 #!/bin/bash
-# sshman - SSH 登录管理器 (极速版)
-# 适用系统: Debian/Ubuntu
-# 特性: 自动刷新菜单 / ESC返回 / 一键预设
+# sshman - SSH 登录管理器 (修复显示版)
+# 修复: 选项6颜色显示错误
+# 优化: 菜单显示逻辑、输入体验
 
 set -e
 
@@ -37,21 +37,18 @@ fi
 
 # --- 核心工具函数 ---
 
-# 快速展示消息并自动继续 (替代旧的暂停函数)
 _flash_msg() {
-    # 停留 1.5 秒让用户看清结果，然后自动继续
     sleep 1.5
 }
 
-# 检查输入是否为返回信号 (0 或 ESC)
-# 用法: if _is_back "$choice"; then return; fi
+# 检查返回信号 (0 或 ESC)
 _is_back() {
     local input="$1"
-    # $'\e' 是 ESC 键的字符表示
+    # 兼容 ESC 字符 (有些终端需要按回车才会发送 ESC 序列)
     if [[ "$input" == "0" || "$input" == $'\e' || "$input" == *$'\e'* ]]; then
-        return 0 # 真，表示要返回
+        return 0
     else
-        return 1 # 假
+        return 1
     fi
 }
 
@@ -145,8 +142,10 @@ _setup_yubikey() {
         echo " 1) 仅 YubiKey (OTP) - [禁用密码]"
         echo " 2) YubiKey + 密码 (2FA)"
         echo " 3) 禁用 YubiKey (恢复默认)"
-        echo " 0) 返回 (或按 Esc)"
-        read -rp "请选择: " y_choice
+        echo " 0) 返回"
+        
+        # 使用 read -e 优化输入体验
+        read -e -rp "请选择: " y_choice
         
         if _is_back "$y_choice"; then return; fi
 
@@ -207,11 +206,13 @@ _presets_menu() {
     while true; do
         clear
         echo -e "${BLUE}=== 推荐预设 (一键配置) ===${RESET}"
-        echo -e " 1) ${GREEN}加固生产${RESET} (禁止Root + 禁密码 + 仅公钥)"
-        echo -e " 2) ${YELLOW}日常开发${RESET} (Root仅密钥 + 允许密码 + 允许公钥)"
-        echo -e " 3) ${RED}临时开放${RESET} (允许Root + 允许密码 - 不推荐)"
-        echo " 0) 返回 (或按 Esc)"
-        read -rp "请选择: " p_choice
+        # 使用 printf 确保颜色正确显示
+        printf " 1) %b加固生产%b (禁止Root + 禁密码 + 仅公钥)\n" "${GREEN}" "${RESET}"
+        printf " 2) %b日常开发%b (Root仅密钥 + 允许密码 + 允许公钥)\n" "${YELLOW}" "${RESET}"
+        printf " 3) %b临时开放%b (允许Root + 允许密码 - 不推荐)\n" "${RED}" "${RESET}"
+        echo " 0) 返回"
+        
+        read -e -rp "请选择: " p_choice
 
         if _is_back "$p_choice"; then return; fi
 
@@ -222,7 +223,6 @@ _presets_menu() {
                 _update_directive "PermitRootLogin" "no"
                 _update_directive "PasswordAuthentication" "no"
                 _update_directive "PubkeyAuthentication" "yes"
-                # 禁用 YubiKey 防止冲突，或者你可以保留
                 _remove_directive "AuthenticationMethods"
                 _restart_ssh
                 echo -e "${GREEN}[OK] 配置已应用${RESET}"
@@ -267,19 +267,20 @@ _manage_keys() {
         echo " 1) 查看公钥"
         echo " 2) 添加公钥 (粘贴)"
         echo " 3) 删除公钥 (按行号)"
-        echo " 0) 返回 (或按 Esc)"
-        read -rp "请选择: " k_choice
+        echo " 0) 返回"
+        
+        read -e -rp "请选择: " k_choice
 
         if _is_back "$k_choice"; then return; fi
 
         case $k_choice in
             1)
                 [[ -f "$AUTHORIZED_KEYS" ]] && nl -ba "$AUTHORIZED_KEYS" || echo "无文件"
-                echo ""; read -rp "按回车继续..." dummy # 只有查看需要手动暂停
+                echo ""; read -rp "按回车继续..." dummy
                 ;;
             2)
                 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-                read -rp "请粘贴公钥: " pubkey
+                read -e -rp "请粘贴公钥: " pubkey
                 if [[ -n "$pubkey" ]]; then
                     echo "$pubkey" >> "$AUTHORIZED_KEYS"; chmod 600 "$AUTHORIZED_KEYS"
                     echo -e "${GREEN}[OK] 添加成功${RESET}"
@@ -287,7 +288,7 @@ _manage_keys() {
                 _flash_msg
                 ;;
             3)
-                read -rp "输入删除行号: " lnum
+                read -e -rp "输入删除行号: " lnum
                 if [[ "$lnum" =~ ^[0-9]+$ ]] && [[ -f "$AUTHORIZED_KEYS" ]]; then
                     sed -i "${lnum}d" "$AUTHORIZED_KEYS"
                     echo -e "${GREEN}[OK] 已删除${RESET}"
@@ -303,7 +304,7 @@ _manage_keys() {
 while true; do
     clear
     echo -e "${BLUE}==========================================${RESET}"
-    echo -e " sshman - 极速版 (Esc/0 返回, 自动刷新)"
+    echo -e " sshman - 极速版 (使用 0 返回，自动刷新)"
     echo -e "${BLUE}==========================================${RESET}"
     
     r_st=$(_get_directive PermitRootLogin "yes")
@@ -315,11 +316,13 @@ while true; do
     printf " 3) Root权限  [%s]\n" "$(_fmt_root "$r_st")"
     printf " 4) YubiKey   [%s]\n" "$(_fmt_yubi)"
     echo   " 5) 密钥管理"
-    echo   " 6) ${CYAN}推荐预设 (一键设置)${RESET}"
+    # 修复：使用 printf 替代 echo 避免颜色代码不转义
+    printf " 6) %b推荐预设 (一键设置)%b\n" "${CYAN}" "${RESET}"
     echo -e "${BLUE}------------------------------------------${RESET}"
     echo " 0) 退出"
     
-    read -rp " 请输入选项: " choice
+    # 优化：提示用户使用数字 0 返回，避免 Esc 困惑
+    read -e -rp " 请输入选项: " choice
     
     case $choice in
         1) _toggle_pass; _flash_msg ;;
