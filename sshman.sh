@@ -2,8 +2,8 @@
 # sshman - SSH 登录管理器 (UTF-8)
 # 请在 UTF-8 终端运行；提供交互式菜单管理 sshd 配置。
 
-# 不使用 -e，避免某些命令失败时直接退出主循环
-set -uo pipefail
+# 仅启用 pipefail，避免因 unset 变量或单个命令失败直接退出循环
+set -o pipefail
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
@@ -484,6 +484,7 @@ _manage_yubikey() {
 
 _enable_yubikey_mode() {
     local mode=$1
+    echo "[*] 正在写入 YubiKey 配置（模式：$mode）..."
     _ensure_yubico_package
     _write_yubikey_authfile
     _backup_file "$PAM_SSHD"
@@ -503,6 +504,7 @@ _enable_yubikey_mode() {
         echo "[OK] 已启用 YubiKey + 密码 (2FA)"
     fi
     _restart_ssh
+    echo "[*] YubiKey 配置完成。"
 }
 
 _apply_preset() {
