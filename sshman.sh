@@ -1,16 +1,16 @@
 #!/bin/bash
 # ==============================================================================
 # sshman - SSH 登录配置管理工具 (个人专用版)
-# 版本: v1.0.3
+# 版本: v1.0.4
 # 作者: 代码助手
 # 说明: 本脚本仅供个人服务器管理使用，请勿在未授权的生产环境中分发。
-# 更新: 增加了 sshd -t 语法预检，防止配置错误导致服务器失联。
+# 更新: 优化交互体验，子菜单(4/6)操作完成后自动返回主菜单。
 # ==============================================================================
 
 set -e
 
 # --- [ 全局配置变量 ] ---
-VERSION="v1.0.3"
+VERSION="v1.0.4"
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
@@ -191,6 +191,7 @@ EOF
                 [[ "$sel" == "1" ]] && _update_conf "PasswordAuthentication" "no" || _update_conf "PasswordAuthentication" "yes"
                 
                 echo -e "${GREEN}[OK] YubiKey 配置已应用${RESET}"; _restart_ssh; _flash_msg
+                return # 操作成功后直接返回主菜单
                 ;;
             3)
                 _backup_file "$PAM_SSHD"
@@ -204,6 +205,7 @@ EOF
                 _remove_conf "AuthenticationMethods"
                 _update_conf "ChallengeResponseAuthentication" "no"
                 echo -e "${GREEN}[OK] YubiKey 已禁用${RESET}"; _restart_ssh; _flash_msg
+                return # 操作成功后直接返回主菜单
                 ;;
             0) return ;;
             *) echo "无效选项"; sleep 0.5 ;;
@@ -231,6 +233,7 @@ _presets_menu() {
                 3) _update_conf "PermitRootLogin" "yes"; _update_conf "PasswordAuthentication" "yes"; _update_conf "PubkeyAuthentication" "yes" ;;
             esac
             echo -e "${GREEN}[OK] 预设已应用${RESET}"; _restart_ssh; _flash_msg
+            return # 操作成功后直接返回主菜单
         elif [[ "$p" == "0" ]]; then return
         else echo "无效选项"; sleep 0.5
         fi
