@@ -108,41 +108,29 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" key choice=""
+    local prompt="$1" back_hint="$2" hint_suffix="" choice
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
-    printf "%s%s: " "$prompt" "$hint_suffix" >&2
+    read -r -p "${prompt}${hint_suffix}: " choice || { echo ""; return 0; }
 
-    # 不使用 -s，直接让终端回显首个字符
-    while IFS= read -rn1 key 2>/dev/null; do
-        # Esc 或回车直接返回
-        if [[ "$key" == $'\e' || "$key" == $'\n' || "$key" == $'\r' ]]; then
-            printf "\n" >&2
-            if [[ -z "$choice" || ( -n "$back_hint" && "$choice" == "0" ) ]]; then
-                echo ""
-                return 0
-            fi
-            echo "$choice"
-            return 0
-        fi
+    choice=${choice//$'\r'/}
+    choice=${choice//$'\n'/}
+    choice="${choice#"${choice%%[![:space:]]*}"}"
+    choice="${choice%"${choice##*[![:space:]]}"}"
 
-        # 退格
-        if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
-            if [[ -n "$choice" ]]; then
-                choice=${choice::-1}
-                printf '\b \b' >&2
-            fi
-            continue
-        fi
-
-        # 普通字符
-        choice+="$key"
-        printf "%s" "$key" >&2
-    done
-
-    printf "\n" >&2
-    echo ""
-    return 0
+    if [[ -z "$choice" ]]; then
+        echo ""
+        return 0
+    fi
+    if [[ "$choice" == $'\e' || "$choice" == $'\e'* ]]; then
+        echo ""
+        return 0
+    fi
+    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
+        echo ""
+        return 0
+    fi
+    echo "$choice"
 }
 
 _status_colors() {
