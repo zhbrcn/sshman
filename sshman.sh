@@ -108,32 +108,41 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" choice
+    local prompt="$1" back_hint="$2" choice="" key old_stty
 
     [[ -n "$back_hint" ]] && prompt="${prompt} (${back_hint})"
-    if ! read -r -p "${prompt}: " choice; then
-        echo ""
-        return 0
-    fi
+    printf "%s: " "$prompt" >&2
 
-    choice=${choice//$'\r'/}
-    choice=${choice//$'\n'/}
-    choice="${choice#"${choice%%[![:space:]]*}"}"
-    choice="${choice%"${choice##*[![:space:]]}"}"
-
-    if [[ -z "$choice" ]]; then
-        echo ""
-        return 0
-    fi
-    if [[ "$choice" == $'\e' || "$choice" == $'\e'* || "$choice" == *$'\e'* ]]; then
-        echo ""
-        return 0
-    fi
-    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-        echo ""
-        return 0
-    fi
-    echo "$choice"
+    old_stty=$(stty -g)
+    stty -echo -icanon time 0 min 1
+    while IFS= read -r -n1 key 2>/dev/null; do
+        case "$key" in
+            $'\e'|$'\n'|$'\r')
+                printf "\n" >&2
+                stty "$old_stty"
+                if [[ -z "$choice" || ( -n "$back_hint" && "$choice" == "0" ) ]]; then
+                    echo ""
+                    return 0
+                fi
+                echo "$choice"
+                return 0
+                ;;
+            $'\177'|$'\b')
+                if [[ -n "$choice" ]]; then
+                    choice=${choice::-1}
+                    printf '\b \b' >&2
+                fi
+                ;;
+            *)
+                choice+="$key"
+                printf "%s" "$key" >&2
+                ;;
+        esac
+    done
+    stty "$old_stty"
+    printf "\n" >&2
+    echo ""
+    return 0
 }
 
 _status_colors() {
@@ -216,7 +225,7 @@ _render_menu() {
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf " %-4s %-24s %s\n" "$1" "$2" "$3"
+        printf " %-4s %-26s %b\n" "$1" "$2" "$3"
     }
 
     clear
@@ -224,12 +233,12 @@ _render_menu() {
     printf " sshman - SSH 登录管理器 (UTF-8)\n"
     printf " %b\n" "$(_blue_text "$sys_info")"
     echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1)" "密码登录 (切换)" "$password_status"
-    menu_line "2)" "公钥登录 (切换)" "$pubkey_status"
-    menu_line "3)" "root 登录 (切换)" "$root_status"
-    menu_line "4)" "YubiKey 模式" "$yubi_display"
-    menu_line "5)" "密钥管理" "$auth_file_status"
-    menu_line "6)" "推荐预设" "$authm_status"
+    menu_line "1)" "密码登录 (切换)" "$(_blue_text "$password_status")"
+    menu_line "2)" "公钥登录 (切换)" "$(_blue_text "$pubkey_status")"
+    menu_line "3)" "root 登录 (切换)" "$(_blue_text "$root_status")"
+    menu_line "4)" "YubiKey 模式" "$(_blue_text "$yubi_display")"
+    menu_line "5)" "密钥管理" "$(_blue_text "$auth_file_status")"
+    menu_line "6)" "推荐预设" "$(_blue_text "$authm_status")"
     echo -e "${BLUE}${divider}${RESET}"
     echo " 0) 退出（Esc/0 返回）"
     echo -e "${BLUE}${border}${RESET}"
