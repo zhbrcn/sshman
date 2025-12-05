@@ -108,29 +108,26 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" choice
+    local prompt="$1" back_hint="$2" hint_suffix="" key
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
-    read -r -p "${prompt}${hint_suffix}: " choice || { echo ""; return 0; }
+    printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
-    choice=${choice//$'\r'/}
-    choice=${choice//$'\n'/}
-    choice="${choice#"${choice%%[![:space:]]*}"}"
-    choice="${choice%"${choice##*[![:space:]]}"}"
+    # 单字符读取，避免回显重复；遇到 Esc/回车/0/退格视为返回
+    stty -echo -icanon min 1 time 0
+    key=$(dd bs=1 count=1 2>/dev/null)
+    stty sane
 
-    if [[ -z "$choice" ]]; then
-        echo ""
-        return 0
-    fi
-    if [[ "$choice" == $'\e' || "$choice" == $'\e'* ]]; then
-        echo ""
-        return 0
-    fi
-    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-        echo ""
-        return 0
-    fi
-    echo "$choice"
+    case "$key" in
+        ""|$'\e'|$'\n'|$'\r'|$'\177'|$'\b'|0)
+            printf "\n" >&2
+            echo ""
+            return 0
+            ;;
+    esac
+
+    printf "%s\n" "$key" >&2
+    echo "$key"
 }
 
 _status_colors() {
