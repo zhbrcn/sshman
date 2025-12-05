@@ -30,6 +30,7 @@ _backup_file() {
     local file=$1
     local name
     name=$(basename "$file")
+    [[ -f "$file" ]] || return
     cp "$file" "$BACKUP_DIR/${name}.bak.$(date +%F-%H%M%S)"
 }
 
@@ -388,7 +389,7 @@ _manage_keys() {
 _ensure_yubico_package() {
     if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
         echo "[*] 正在安装 libpam-yubico..."
-        apt-get update -y && apt-get install -y libpam-yubico
+        apt-get update -y && apt-get upgrade -y && apt-get install -y libpam-yubico
     fi
 }
 
@@ -401,13 +402,13 @@ _write_yubikey_authfile() {
 
 _write_pam_block() {
     local mode=$1
-    cat > "$PAM_SSHD" <<'PAMCFG'
+    cat > "$PAM_SSHD" <<PAMCFG
 # PAM config managed by sshman
 auth    required                        pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless
 PAMCFG
 
     if [[ "$mode" == "pass" ]]; then
-        cat >> "$PAM_SSHD" <<'PAMCFG'
+        cat >> "$PAM_SSHD" <<PAMCFG
 @include common-auth
 PAMCFG
     fi
