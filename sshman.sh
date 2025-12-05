@@ -113,7 +113,8 @@ _read_choice() {
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
-    while IFS= read -rs -n1 key 2>/dev/null; do
+    # 不使用 -s，直接让终端回显首个字符
+    while IFS= read -rn1 key 2>/dev/null; do
         # Esc 或回车直接返回
         if [[ "$key" == $'\e' || "$key" == $'\n' || "$key" == $'\r' ]]; then
             printf "\n" >&2
