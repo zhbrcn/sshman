@@ -104,38 +104,43 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" choice rest
+    local prompt="$1" back_hint="$2" hint_suffix="" first rest line choice
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
     # 读取首个按键；支持 Esc 直接返回，无需回车
-    if ! IFS= read -rs -n1 choice; then
+    if ! IFS= read -rs -n1 first; then
         printf "\n" >&2
-        return 1
+        echo ""
+        return 0
     fi
 
     # 按 Esc 返回上一层
-    if [[ "$choice" == $'\e' ]]; then
+    if [[ "$first" == $'\e' ]]; then
         # 丢弃后续残留输入（如终端可能附带的 [ 字符）
         while IFS= read -rs -n1 -t 0.01 rest 2>/dev/null; do
             [[ "$rest" == $'\n' ]] && break
         done
         printf "\n" >&2
-        return 1
+        echo ""
+        return 0
     fi
 
     # 用户直接回车视为返回
-    if [[ -z "$choice" || "$choice" == $'\n' ]]; then
+    if [[ -z "$first" || "$first" == $'\n' ]]; then
         printf "\n" >&2
-        return 1
+        echo ""
+        return 0
     fi
 
-    # 继续读取本行剩余输入（支持多字符），直到回车
-    while IFS= read -rs -n1 -t 0.1 rest 2>/dev/null; do
-        [[ "$rest" == $'\n' ]] && break
-        choice+="$rest"
-    done
+    # 显示已输入字符，再读取本行剩余输入（需要回车确认）
+    printf "%s" "$first" >&2
+    if IFS= read -r line; then
+        choice="$first$line"
+    else
+        choice="$first"
+    fi
 
     choice=${choice//$'\r'/}
     choice=${choice//$'\n'/}
@@ -143,7 +148,8 @@ _read_choice() {
     choice="${choice%"${choice##*[![:space:]]}"}"
     if [[ -n "$back_hint" && "$choice" == "0" ]]; then
         printf "\n" >&2
-        return 1
+        echo ""
+        return 0
     fi
     printf "\n" >&2
     echo "$choice"
@@ -253,7 +259,8 @@ _set_root_login() {
     echo "2) 允许 root 仅限密钥"
     echo "3) 禁止 root 登录"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "请选择" "Esc/0 返回")
+    [[ -z "$a" ]] && return
 
     _backup_file "$SSH_CONFIG"
     case $a in
@@ -270,7 +277,8 @@ _set_password_login() {
     echo "1) 开启密码登录"
     echo "2) 关闭密码登录"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "请选择" "Esc/0 返回")
+    [[ -z "$a" ]] && return
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -286,7 +294,8 @@ _set_pubkey_login() {
     echo "1) 开启公钥登录"
     echo "2) 关闭公钥登录"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "请选择" "Esc/0 返回")
+    [[ -z "$a" ]] && return
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -302,12 +311,14 @@ _manage_keys() {
     chmod 700 "$HOME/.ssh"
 
     _section_header "authorized_keys" "状态：$(_authorized_keys_label)"
+    echo "当前密钥文件：$(_authorized_keys_label)"
     echo "1) 查看密钥"
     echo "2) 手动追加公钥"
     echo "3) 从文件导入（如 ~/.ssh/id_rsa.pub）"
     echo "4) 按行号删除公钥"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "请选择" "Esc/0 返回")
+    [[ -z "$a" ]] && return
 
     case $a in
         1)
@@ -363,11 +374,13 @@ _manage_keys() {
 _manage_pubkey_suite() {
     while true; do
         _section_header "公钥登录 / 密钥" "登录: $(_status_pubkey_login) | 密钥: $(_authorized_keys_label)"
+        echo "状态：登录 $(_status_pubkey_login) | 密钥 $(_authorized_keys_label)"
         echo "1) 切换公钥登录开关"
         echo "2) 管理 authorized_keys"
         echo "0) 返回"
         local a
-        a=$(_read_choice "请选择" "Esc/0 返回") || return
+        a=$(_read_choice "请选择" "Esc/0 返回")
+        [[ -z "$a" ]] && return
 
         case $a in
             1) _set_pubkey_login ;;
@@ -436,7 +449,8 @@ _choose_yubikey_mode() {
     echo "2) YubiKey + 密码 (2FA)"
     echo "0) 取消"
     local m
-    m=$(_read_choice "请选择" "Esc/0 返回") || return
+    m=$(_read_choice "请选择" "Esc/0 返回")
+    [[ -z "$m" ]] && return
 
     case $m in
         1) _enable_yubikey_mode otp ;;
@@ -449,11 +463,13 @@ _choose_yubikey_mode() {
 _manage_yubikey() {
     while true; do
         _section_header "YubiKey 管理" "状态：$(_status_yubikey_mode)"
+        echo "当前状态：$(_status_yubikey_mode)"
         echo "1) 配置/切换 YubiKey 模式"
         echo "2) 禁用/恢复 YubiKey"
         echo "0) 返回"
         local a
-        a=$(_read_choice "请选择" "Esc/0 返回") || return
+        a=$(_read_choice "请选择" "Esc/0 返回")
+        [[ -z "$a" ]] && return
 
         case $a in
             1) _choose_yubikey_mode ;;
@@ -497,7 +513,8 @@ _apply_preset() {
     echo "4) 仅 YubiKey OTP（禁用密码/公钥）"
     echo "5) YubiKey + 密码（保留公钥）"
     local p
-    p=$(_read_choice "选择预设" "Esc/0 返回") || return
+    p=$(_read_choice "选择预设" "Esc/0 返回")
+    [[ -z "$p" ]] && return
 
     case $p in
         1)
@@ -539,7 +556,8 @@ _apply_preset() {
 _check_utf8_locale
 while true; do
     _render_menu
-    c=$(_read_choice "请选择操作" "") || continue
+    c=$(_read_choice "请选择操作" "")
+    [[ -z "$c" ]] && continue
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
