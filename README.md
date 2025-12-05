@@ -5,3 +5,9 @@
 ```
 bash sshman.sh
 ```
+
+也可以直接通过 `curl` 下载脚本、授予可执行权限并运行，使用一条命令完成：
+
+```
+curl -fsSL https://raw.githubusercontent.com/zhbrcn/sshman/main/sshman.sh -o sshman.sh && chmod +x sshman.sh && ./sshman.sh
+```
