@@ -128,14 +128,14 @@ _read_choice() {
         fi
 
         # 回车直接返回
-        if [[ "$key" == $'\n' ]]; then
+        if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
             printf "\n" >&2
             echo ""
             return 0
         fi
 
-        # 退格
-        if [[ "$key" == $'\177' ]]; then
+        # 退格（支持 DEL 和 BS）
+        if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
             if [[ -n "$choice" ]]; then
                 choice=${choice::-1}
                 printf '\b \b' >&2
@@ -154,7 +154,7 @@ _read_choice() {
                 echo ""
                 return 0
             fi
-            if [[ "$key" == $'\n' ]]; then
+            if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
                 printf "\n" >&2
                 choice=${choice//$'\r'/}
                 choice=${choice//$'\n'/}
@@ -167,7 +167,7 @@ _read_choice() {
                 echo "$choice"
                 return 0
             fi
-            if [[ "$key" == $'\177' ]]; then
+            if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
                 if [[ -n "$choice" ]]; then
                     choice=${choice::-1}
                     printf '\b \b' >&2
