@@ -128,9 +128,9 @@ _read_choice() {
             ;;
     esac
 
-    # 显示已输入字符，并将其作为初始值供 readline 编辑
-    printf "%s" "$first" >&2
-    if ! IFS= read -er -p "" -i "$first" rest; then
+    # 将首字符作为初始值供 readline 编辑（不额外打印，避免重复显示）
+    READLINE_LINE="$first" READLINE_POINT=${#first}
+    if ! IFS= read -er -p "" rest; then
         printf "\n" >&2
         echo ""
         return 0
