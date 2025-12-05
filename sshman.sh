@@ -224,13 +224,12 @@ _render_menu() {
     printf " sshman - SSH 登录管理器 (UTF-8)\n"
     printf " %b\n" "$(_blue_text "$sys_info")"
     echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1)" "root 登录 (切换)" "$root_status"
-    menu_line "2)" "密码登录 (切换)" "$password_status"
-    menu_line "3)" "公钥登录 (切换)" "$pubkey_status"
-    menu_line "4)" "YubiKey 开关 (切换)" "$yubi_display"
-    menu_line "5)" "authorized_keys" "$auth_file_status"
-    menu_line "6)" "YubiKey 模式" "$yubi_display"
-    menu_line "7)" "推荐预设" "$authm_status"
+    menu_line "1)" "密码登录 (切换)" "$password_status"
+    menu_line "2)" "公钥登录 (切换)" "$pubkey_status"
+    menu_line "3)" "root 登录 (切换)" "$root_status"
+    menu_line "4)" "YubiKey 模式" "$yubi_display"
+    menu_line "5)" "密钥管理" "$auth_file_status"
+    menu_line "6)" "推荐预设" "$authm_status"
     echo -e "${BLUE}${divider}${RESET}"
     echo " 0) 退出（Esc/0 返回）"
     echo -e "${BLUE}${border}${RESET}"
@@ -282,7 +281,7 @@ _manage_keys() {
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
 
-    _section_header "authorized_keys" "状态：$(_authorized_keys_label)"
+    _section_header "密钥管理 (authorized_keys)" "状态：$(_authorized_keys_label)"
     echo "当前密钥文件：$(_authorized_keys_label)"
     echo "1) 查看密钥"
     echo "2) 手动追加公钥"
@@ -518,13 +517,12 @@ while true; do
         continue
     fi
     case $c in
-        1) _set_root_login ;;
-        2) _set_password_login ;;
-        3) _set_pubkey_login ;;
-        4) _toggle_yubikey ;;
+        1) _set_password_login ;;
+        2) _set_pubkey_login ;;
+        3) _set_root_login ;;
+        4) _choose_yubikey_mode ;;
         5) _manage_keys ;;
-        6) _choose_yubikey_mode ;;
-        7) _apply_preset ;;
+        6) _apply_preset ;;
         0) exit 0 ;;
         *) echo "无效选项" ;;
     esac
