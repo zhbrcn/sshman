@@ -1,17 +1,15 @@
 #!/bin/bash
-# sshman - SSH 登录管理器 (修复优化版)
-# 适用系统: Debian/Ubuntu (依赖 apt-get)
-# 请在 UTF-8 终端运行
+# sshman - SSH 登录管理器 (极速版)
+# 适用系统: Debian/Ubuntu
+# 特性: 自动刷新菜单 / ESC返回 / 一键预设
 
-# 如果发生严重错误则停止运行，但允许 grep 等命令返回非零值
 set -e
 
-# --- 全局变量配置 ---
+# --- 全局配置 ---
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
-# 注意：这里是硬编码的 YubiKey 密钥，生产环境建议不要直接写在脚本里
 AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
 HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
 YUBI_CLIENT_ID="85975"
@@ -22,20 +20,15 @@ GREEN="\033[32m"
 RED="\033[31m"
 BLUE="\033[34m"
 YELLOW="\033[33m"
+CYAN="\033[36m"
 RESET="\033[0m"
 
-# --- 基础检查函数 ---
-
-# 1. 检查是否为 Root 用户
+# --- 基础检查 ---
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}[错误] 请使用 root 权限运行此脚本 (例如: sudo bash sshman.sh)${RESET}"
+   echo -e "${RED}[错误] 请使用 root 权限运行: sudo bash sshman.sh${RESET}"
    exit 1
 fi
-
-# 2. 创建备份目录
 mkdir -p "$BACKUP_DIR"
-
-# 3. 检测 SSH 服务名称 (ssh 或 sshd)
 if systemctl list-unit-files | grep -q "^ssh.service"; then
     SSH_SERVICE="ssh"
 else
@@ -44,38 +37,42 @@ fi
 
 # --- 核心工具函数 ---
 
-# 暂停并等待用户确认
-_pause() {
-    echo ""
-    read -rp "按 [回车键] 返回主菜单..." dummy
+# 快速展示消息并自动继续 (替代旧的暂停函数)
+_flash_msg() {
+    # 停留 1.5 秒让用户看清结果，然后自动继续
+    sleep 1.5
 }
 
-# 备份文件
-_backup_file() {
-    local file=$1
-    local name
-    name=$(basename "$file")
-    if [[ -f "$file" ]]; then
-        local backup_path="$BACKUP_DIR/${name}.bak.$(date +%F-%H%M%S)"
-        cp "$file" "$backup_path"
-        # echo "已备份 $file 到 $backup_path" # 调试时可开启
+# 检查输入是否为返回信号 (0 或 ESC)
+# 用法: if _is_back "$choice"; then return; fi
+_is_back() {
+    local input="$1"
+    # $'\e' 是 ESC 键的字符表示
+    if [[ "$input" == "0" || "$input" == $'\e' || "$input" == *$'\e'* ]]; then
+        return 0 # 真，表示要返回
+    else
+        return 1 # 假
     fi
 }
 
-# 重启 SSH 服务
+_backup_file() {
+    local file=$1
+    if [[ -f "$file" ]]; then
+        cp "$file" "$BACKUP_DIR/$(basename "$file").bak.$(date +%F-%H%M%S)"
+    fi
+}
+
 _restart_ssh() {
     echo -e "${YELLOW}[*] 正在重启 SSH 服务...${RESET}"
     if systemctl restart "$SSH_SERVICE"; then
-        echo -e "${GREEN}[OK] SSH 服务重启成功${RESET}"
+        echo -e "${GREEN}[OK] SSH 服务已重启${RESET}"
     else
-        echo -e "${RED}[!] SSH 重启失败，请手动检查配置文件: sshd -t${RESET}"
+        echo -e "${RED}[!] SSH 重启失败，请检查配置!${RESET}"
     fi
 }
 
-# 修改 SSH 配置文件 (如果存在则替换，不存在则添加)
 _update_directive() {
-    local key=$1
-    local value=$2
+    local key=$1; local value=$2
     if grep -q "^${key}" "$SSH_CONFIG"; then
         sed -i "s/^${key}.*/${key} ${value}/" "$SSH_CONFIG"
     else
@@ -83,281 +80,255 @@ _update_directive() {
     fi
 }
 
-# 删除配置项
 _remove_directive() {
-    local key=$1
-    sed -i "/^${key}\\b/d" "$SSH_CONFIG"
+    sed -i "/^${1}\\b/d" "$SSH_CONFIG"
 }
 
-# 获取当前配置值
 _get_directive() {
-    local key=$1
-    local default=$2
-    # 获取最后一行有效的配置
-    local found
-    found=$(grep -E "^${key}\\b" "$SSH_CONFIG" | tail -n1 | awk '{print $2}')
-    echo "${found:-$default}"
+    local val
+    val=$(grep -E "^${1}\\b" "$SSH_CONFIG" | tail -n1 | awk '{print $2}')
+    echo "${val:-$2}"
 }
 
-# --- 状态显示格式化 ---
-
-_format_status() {
-    if [[ "$1" == "yes" ]]; then
-        echo -e "${GREEN}已开启${RESET}"
-    else
-        echo -e "${RED}已关闭${RESET}"
-    fi
-}
-
-_format_root() {
+# --- 状态显示 ---
+_fmt_yn() { if [[ "$1" == "yes" ]]; then echo -e "${GREEN}开启${RESET}"; else echo -e "${RED}关闭${RESET}"; fi; }
+_fmt_root() {
     case $1 in
-        yes) echo -e "${RED}允许 (不安全)${RESET}" ;;
-        prohibit-password) echo -e "${GREEN}仅密钥 (推荐)${RESET}" ;;
-        no) echo -e "${GREEN}禁止 (最安全)${RESET}" ;;
-        *) echo "未设置" ;;
+        yes) echo -e "${RED}允许${RESET}" ;;
+        prohibit-password) echo -e "${GREEN}仅密钥${RESET}" ;;
+        no) echo -e "${GREEN}禁止${RESET}" ;;
+        *) echo "未知" ;;
     esac
 }
-
-_status_yubikey() {
+_fmt_yubi() {
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        if grep -q "^@include common-auth" "$PAM_SSHD"; then
-             echo -e "${YELLOW}YubiKey + 密码 (2FA)${RESET}"
-        else
-             echo -e "${GREEN}仅 YubiKey (OTP)${RESET}"
-        fi
-    else
-        echo -e "${RED}未启用${RESET}"
-    fi
+        if grep -q "^@include common-auth" "$PAM_SSHD"; then echo -e "${YELLOW}2FA模式${RESET}"; else echo -e "${GREEN}仅Key${RESET}"; fi
+    else echo -e "${RED}未启用${RESET}"; fi
 }
 
-# --- 核心功能函数 ---
+# --- 功能函数 ---
 
-# 切换 Root 登录权限
-_toggle_root_login() {
-    local current next
-    current=$(_get_directive PermitRootLogin "yes")
-    
-    # 循环切换逻辑: yes -> prohibit-password -> no -> yes
-    case $current in
-        yes) next="prohibit-password" ;;
-        prohibit-password) next="no" ;;
-        *) next="yes" ;;
-    esac
-
+_toggle_root() {
+    local curr=$(_get_directive PermitRootLogin "yes"); local next
+    case $curr in yes) next="prohibit-password";; prohibit-password) next="no";; *) next="yes";; esac
     _backup_file "$SSH_CONFIG"
     _update_directive "PermitRootLogin" "$next"
-    echo -e "Root 登录权限已修改为: $(_format_root "$next")"
+    echo -e "Root登录: $(_fmt_root "$next")"
     _restart_ssh
 }
 
-# 切换密码登录
-_toggle_password() {
-    local current next
-    current=$(_get_directive PasswordAuthentication "yes")
-    if [[ "$current" == "yes" ]]; then next="no"; else next="yes"; fi
-    
+_toggle_pass() {
+    local curr=$(_get_directive PasswordAuthentication "yes"); local next
+    if [[ "$curr" == "yes" ]]; then next="no"; else next="yes"; fi
     _backup_file "$SSH_CONFIG"
     _update_directive "PasswordAuthentication" "$next"
-    echo -e "密码登录已修改为: $(_format_status "$next")"
+    echo -e "密码登录: $(_fmt_yn "$next")"
     _restart_ssh
 }
 
-# 切换公钥登录
-_toggle_pubkey() {
-    local current next
-    current=$(_get_directive PubkeyAuthentication "yes")
-    if [[ "$current" == "yes" ]]; then next="no"; else next="yes"; fi
-    
+_toggle_pub() {
+    local curr=$(_get_directive PubkeyAuthentication "yes"); local next
+    if [[ "$curr" == "yes" ]]; then next="no"; else next="yes"; fi
     _backup_file "$SSH_CONFIG"
     _update_directive "PubkeyAuthentication" "$next"
-    echo -e "公钥登录已修改为: $(_format_status "$next")"
+    echo -e "公钥登录: $(_fmt_yn "$next")"
     _restart_ssh
 }
 
-# 密钥管理菜单
-_manage_keys() {
+# --- YubiKey 逻辑 ---
+_ensure_yubi() { dpkg -s libpam-yubico >/dev/null 2>&1 || (echo "安装依赖..."; apt-get update -qq && apt-get install -y libpam-yubico); }
+
+_setup_yubikey() {
     while true; do
         clear
-        echo -e "${BLUE}=== 密钥管理 (Authorized Keys) ===${RESET}"
-        if [[ -f "$AUTHORIZED_KEYS" ]]; then
-            local count=$(wc -l < "$AUTHORIZED_KEYS")
-            echo "当前状态: 文件存在，共 $count 行"
-        else
-            echo "当前状态: 文件不存在"
-        fi
-        echo "--------------------------------"
-        echo "1) 查看当前所有公钥"
-        echo "2) 手动粘贴添加公钥"
-        echo "3) 删除指定行的公钥"
-        echo "0) 返回主菜单"
-        echo "--------------------------------"
-        read -rp "请选择: " k_choice
+        echo -e "${BLUE}=== YubiKey 模式选择 ===${RESET}"
+        echo " 1) 仅 YubiKey (OTP) - [禁用密码]"
+        echo " 2) YubiKey + 密码 (2FA)"
+        echo " 3) 禁用 YubiKey (恢复默认)"
+        echo " 0) 返回 (或按 Esc)"
+        read -rp "请选择: " y_choice
+        
+        if _is_back "$y_choice"; then return; fi
 
-        case $k_choice in
+        case $y_choice in
             1)
-                if [[ -f "$AUTHORIZED_KEYS" ]]; then
-                    echo -e "\n--- 公钥列表 ---"
-                    nl -ba "$AUTHORIZED_KEYS"
-                else
-                    echo -e "\n[!] 文件不存在。"
-                fi
-                _pause
+                _ensure_yubi; _backup_file "$PAM_SSHD"; _backup_file "$AUTHORIZED_YUBIKEYS"
+                echo "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"; chmod 600 "$AUTHORIZED_YUBIKEYS"
+                echo "auth required pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" > "$PAM_SSHD"
+                cat >> "$PAM_SSHD" <<EOF
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
+                _update_directive "UsePAM" "yes"
+                _update_directive "ChallengeResponseAuthentication" "yes"
+                _update_directive "AuthenticationMethods" "keyboard-interactive"
+                _update_directive "PasswordAuthentication" "no"
+                echo -e "${GREEN}[OK] 已设为仅 YubiKey${RESET}"; _restart_ssh; _flash_msg
                 ;;
             2)
-                mkdir -p "$HOME/.ssh"
-                chmod 700 "$HOME/.ssh"
-                read -rp "请粘贴公钥内容 (然后按回车): " pubkey
-                if [[ -n "$pubkey" ]]; then
-                    echo "$pubkey" >> "$AUTHORIZED_KEYS"
-                    chmod 600 "$AUTHORIZED_KEYS"
-                    echo -e "${GREEN}[OK] 公钥已添加。${RESET}"
-                else
-                    echo "未输入内容。"
-                fi
-                _pause
+                _ensure_yubi; _backup_file "$PAM_SSHD"; _backup_file "$AUTHORIZED_YUBIKEYS"
+                echo "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"; chmod 600 "$AUTHORIZED_YUBIKEYS"
+                echo "auth required pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" > "$PAM_SSHD"
+                echo "@include common-auth" >> "$PAM_SSHD"
+                cat >> "$PAM_SSHD" <<EOF
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
+                _update_directive "UsePAM" "yes"
+                _update_directive "ChallengeResponseAuthentication" "yes"
+                _update_directive "AuthenticationMethods" "keyboard-interactive"
+                _update_directive "PasswordAuthentication" "yes"
+                echo -e "${GREEN}[OK] 已设为 YubiKey + 密码${RESET}"; _restart_ssh; _flash_msg
                 ;;
             3)
-                read -rp "请输入要删除的行号: " line_num
-                if [[ "$line_num" =~ ^[0-9]+$ ]]; then
-                     if [[ -f "$AUTHORIZED_KEYS" ]]; then
-                        sed -i "${line_num}d" "$AUTHORIZED_KEYS"
-                        echo -e "${GREEN}[OK] 第 $line_num 行已删除。${RESET}"
-                     fi
-                else
-                    echo "无效的行号。"
-                fi
-                _pause
+                _backup_file "$PAM_SSHD"
+                echo "@include common-auth" > "$PAM_SSHD"
+                cat >> "$PAM_SSHD" <<EOF
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
+                _remove_directive "AuthenticationMethods"
+                _update_directive "ChallengeResponseAuthentication" "no"
+                echo -e "${GREEN}[OK] YubiKey 已禁用${RESET}"; _restart_ssh; _flash_msg
                 ;;
-            0) return ;;
-            *) echo "无效选项"; sleep 1 ;;
+            *) echo "无效选项"; sleep 0.5 ;;
         esac
     done
 }
 
-# --- YubiKey 相关函数 ---
+# --- 推荐预设逻辑 ---
+_presets_menu() {
+    while true; do
+        clear
+        echo -e "${BLUE}=== 推荐预设 (一键配置) ===${RESET}"
+        echo -e " 1) ${GREEN}加固生产${RESET} (禁止Root + 禁密码 + 仅公钥)"
+        echo -e " 2) ${YELLOW}日常开发${RESET} (Root仅密钥 + 允许密码 + 允许公钥)"
+        echo -e " 3) ${RED}临时开放${RESET} (允许Root + 允许密码 - 不推荐)"
+        echo " 0) 返回 (或按 Esc)"
+        read -rp "请选择: " p_choice
 
-_ensure_yubico() {
-    if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
-        echo -e "${YELLOW}[*] 检测到未安装 libpam-yubico，正在安装...${RESET}"
-        apt-get update -qq && apt-get install -y libpam-yubico
-    fi
+        if _is_back "$p_choice"; then return; fi
+
+        case $p_choice in
+            1)
+                echo "[*] 应用：加固生产模式..."
+                _backup_file "$SSH_CONFIG"
+                _update_directive "PermitRootLogin" "no"
+                _update_directive "PasswordAuthentication" "no"
+                _update_directive "PubkeyAuthentication" "yes"
+                # 禁用 YubiKey 防止冲突，或者你可以保留
+                _remove_directive "AuthenticationMethods"
+                _restart_ssh
+                echo -e "${GREEN}[OK] 配置已应用${RESET}"
+                _flash_msg
+                ;;
+            2)
+                echo "[*] 应用：日常开发模式..."
+                _backup_file "$SSH_CONFIG"
+                _update_directive "PermitRootLogin" "prohibit-password"
+                _update_directive "PasswordAuthentication" "yes"
+                _update_directive "PubkeyAuthentication" "yes"
+                _remove_directive "AuthenticationMethods"
+                _restart_ssh
+                echo -e "${GREEN}[OK] 配置已应用${RESET}"
+                _flash_msg
+                ;;
+            3)
+                echo "[*] 应用：临时开放模式..."
+                _backup_file "$SSH_CONFIG"
+                _update_directive "PermitRootLogin" "yes"
+                _update_directive "PasswordAuthentication" "yes"
+                _update_directive "PubkeyAuthentication" "yes"
+                _remove_directive "AuthenticationMethods"
+                _restart_ssh
+                echo -e "${RED}[警告] 系统现在允许 Root 密码登录，请注意安全!${RESET}"
+                _flash_msg
+                ;;
+            *) echo "无效选项"; sleep 0.5 ;;
+        esac
+    done
 }
 
-_write_yubi_pam() {
-    local mode=$1 # 'otp' or 'pass'
-    _ensure_yubico
-    
-    # 写入 authorized_yubikeys
-    _backup_file "$AUTHORIZED_YUBIKEYS"
-    echo "$HARDENED_YUBIKEYS" > "$AUTHORIZED_YUBIKEYS"
-    chmod 600 "$AUTHORIZED_YUBIKEYS"
-    
-    # 写入 PAM
-    _backup_file "$PAM_SSHD"
-    echo "# Managed by sshman" > "$PAM_SSHD"
-    echo "auth required pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless" >> "$PAM_SSHD"
-    
-    if [[ "$mode" == "pass" ]]; then
-        echo "@include common-auth" >> "$PAM_SSHD"
-    fi
-    
-    # 添加标准 PAM 配置
-    cat >> "$PAM_SSHD" <<EOF
-account include common-account
-password include common-password
-session include common-session
-session include common-session-noninteractive
-EOF
+_manage_keys() {
+    while true; do
+        clear
+        echo -e "${BLUE}=== 密钥管理 ===${RESET}"
+        if [[ -f "$AUTHORIZED_KEYS" ]]; then
+            echo "当前: $(wc -l < "$AUTHORIZED_KEYS") 个公钥"
+        else
+            echo "当前: 无文件"
+        fi
+        echo " 1) 查看公钥"
+        echo " 2) 添加公钥 (粘贴)"
+        echo " 3) 删除公钥 (按行号)"
+        echo " 0) 返回 (或按 Esc)"
+        read -rp "请选择: " k_choice
+
+        if _is_back "$k_choice"; then return; fi
+
+        case $k_choice in
+            1)
+                [[ -f "$AUTHORIZED_KEYS" ]] && nl -ba "$AUTHORIZED_KEYS" || echo "无文件"
+                echo ""; read -rp "按回车继续..." dummy # 只有查看需要手动暂停
+                ;;
+            2)
+                mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+                read -rp "请粘贴公钥: " pubkey
+                if [[ -n "$pubkey" ]]; then
+                    echo "$pubkey" >> "$AUTHORIZED_KEYS"; chmod 600 "$AUTHORIZED_KEYS"
+                    echo -e "${GREEN}[OK] 添加成功${RESET}"
+                fi
+                _flash_msg
+                ;;
+            3)
+                read -rp "输入删除行号: " lnum
+                if [[ "$lnum" =~ ^[0-9]+$ ]] && [[ -f "$AUTHORIZED_KEYS" ]]; then
+                    sed -i "${lnum}d" "$AUTHORIZED_KEYS"
+                    echo -e "${GREEN}[OK] 已删除${RESET}"
+                fi
+                _flash_msg
+                ;;
+            *) echo "无效"; sleep 0.5 ;;
+        esac
+    done
 }
 
-_disable_yubikey() {
-    _backup_file "$PAM_SSHD"
-    cat > "$PAM_SSHD" <<EOF
-@include common-auth
-account include common-account
-password include common-password
-session include common-session
-session include common-session-noninteractive
-EOF
-    _remove_directive "AuthenticationMethods"
-    _update_directive "ChallengeResponseAuthentication" "no"
-    echo -e "${GREEN}[OK] YubiKey 已禁用，恢复默认设置。${RESET}"
-    _restart_ssh
-}
-
-_setup_yubikey() {
-    clear
-    echo -e "${BLUE}=== YubiKey 配置模式 ===${RESET}"
-    echo "1) 仅 YubiKey (OTP) - 禁用密码登录"
-    echo "2) YubiKey + 密码 (两步验证)"
-    echo "3) 禁用 YubiKey (恢复默认)"
-    echo "0) 返回"
-    read -rp "请选择: " y_choice
-    
-    case $y_choice in
-        1)
-            _write_yubi_pam "otp"
-            _update_directive "UsePAM" "yes"
-            _update_directive "ChallengeResponseAuthentication" "yes"
-            _update_directive "AuthenticationMethods" "keyboard-interactive"
-            _update_directive "PasswordAuthentication" "no"
-            echo -e "${GREEN}[OK] 已配置为仅 YubiKey 模式。${RESET}"
-            _restart_ssh
-            ;;
-        2)
-            _write_yubi_pam "pass"
-            _update_directive "UsePAM" "yes"
-            _update_directive "ChallengeResponseAuthentication" "yes"
-            _update_directive "AuthenticationMethods" "keyboard-interactive"
-            _update_directive "PasswordAuthentication" "yes"
-            echo -e "${GREEN}[OK] 已配置为 YubiKey + 密码模式。${RESET}"
-            _restart_ssh
-            ;;
-        3) _disable_yubikey ;;
-        0) return ;;
-        *) echo "无效选项" ;;
-    esac
-    _pause
-}
-
-# --- 主菜单逻辑 ---
-
-_show_menu() {
-    clear
-    local border="================================================================"
-    echo -e "${BLUE}$border${RESET}"
-    echo -e "   sshman - SSH 登录配置管理器 (新手友好版)"
-    echo -e "   系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
-    echo -e "${BLUE}$border${RESET}"
-    
-    # 获取当前状态
-    local root_st=$(_get_directive PermitRootLogin "yes")
-    local pass_st=$(_get_directive PasswordAuthentication "yes")
-    local pub_st=$(_get_directive PubkeyAuthentication "yes")
-    
-    printf " 1) 密码登录开关       [%s]\n" "$(_format_status "$pass_st")"
-    printf " 2) 公钥登录开关       [%s]\n" "$(_format_status "$pub_st")"
-    printf " 3) Root 登录权限      [%s]\n" "$(_format_root "$root_st")"
-    printf " 4) YubiKey 设置       [%s]\n" "$(_status_yubikey)"
-    echo " 5) 密钥管理 (查看/添加/删除)"
-    echo " ----------------------------------------------------------------"
-    echo " 0) 退出程序"
-    echo -e "${BLUE}$border${RESET}"
-}
-
-# --- 主程序循环 ---
-
+# --- 主循环 ---
 while true; do
-    _show_menu
-    read -rp " 请输入数字选项 [0-5]: " choice
+    clear
+    echo -e "${BLUE}==========================================${RESET}"
+    echo -e " sshman - 极速版 (Esc/0 返回, 自动刷新)"
+    echo -e "${BLUE}==========================================${RESET}"
+    
+    r_st=$(_get_directive PermitRootLogin "yes")
+    p_st=$(_get_directive PasswordAuthentication "yes")
+    k_st=$(_get_directive PubkeyAuthentication "yes")
+
+    printf " 1) 密码登录  [%s]\n" "$(_fmt_yn "$p_st")"
+    printf " 2) 公钥登录  [%s]\n" "$(_fmt_yn "$k_st")"
+    printf " 3) Root权限  [%s]\n" "$(_fmt_root "$r_st")"
+    printf " 4) YubiKey   [%s]\n" "$(_fmt_yubi)"
+    echo   " 5) 密钥管理"
+    echo   " 6) ${CYAN}推荐预设 (一键设置)${RESET}"
+    echo -e "${BLUE}------------------------------------------${RESET}"
+    echo " 0) 退出"
+    
+    read -rp " 请输入选项: " choice
     
     case $choice in
-        1) _toggle_password; _pause ;;
-        2) _toggle_pubkey; _pause ;;
-        3) _toggle_root_login; _pause ;;
-        4) _setup_yubikey ;; # 子菜单内部有 pause
-        5) _manage_keys ;;   # 子菜单内部有 pause
-        0) echo "已退出。"; exit 0 ;;
-        *) echo -e "${RED}无效输入，请重新输入。${RESET}"; sleep 1 ;;
+        1) _toggle_pass; _flash_msg ;;
+        2) _toggle_pub; _flash_msg ;;
+        3) _toggle_root; _flash_msg ;;
+        4) _setup_yubikey ;;
+        5) _manage_keys ;;
+        6) _presets_menu ;;
+        0) echo "Bye!"; exit 0 ;;
+        *) echo "无效选项"; sleep 0.5 ;;
     esac
 done
