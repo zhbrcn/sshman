@@ -1,16 +1,16 @@
 #!/bin/bash
 # ==============================================================================
 # sshman - SSH 登录配置管理工具 (个人专用版)
-# 版本: v1.0.4
+# 版本: v1.0.5
 # 作者: 代码助手
 # 说明: 本脚本仅供个人服务器管理使用，请勿在未授权的生产环境中分发。
-# 更新: 优化交互体验，子菜单(4/6)操作完成后自动返回主菜单。
+# 更新: 预设模式强制禁用 YubiKey，且状态匹配逻辑增加 YubiKey 检查。
 # ==============================================================================
 
 set -e
 
 # --- [ 全局配置变量 ] ---
-VERSION="v1.0.4"
+VERSION="v1.0.5"
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
@@ -110,6 +110,12 @@ _fmt_yubi() {
 }
 
 _check_preset_status() {
+    # 0) 预设的前提是 YubiKey 必须被禁用。
+    # 如果 PAM 中包含 yubico 模块，说明处于 YubiKey 模式，不匹配任何标准预设。
+    if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
+        return
+    fi
+
     local root_st pass_st pub_st
     root_st=$(_get_conf "PermitRootLogin" "yes")
     pass_st=$(_get_conf "PasswordAuthentication" "yes")
@@ -162,6 +168,20 @@ _toggle_root() {
 # --- [ YubiKey 模块 ] ---
 _ensure_yubi_pkg() { dpkg -s libpam-yubico &>/dev/null || (echo "安装 YubiKey 依赖..."; apt-get update -qq && apt-get install -y libpam-yubico); }
 
+# 核心逻辑：强制彻底禁用 YubiKey (恢复 PAM + 清理 SSHD 配置)
+_disable_yubi_internal() {
+    _backup_file "$PAM_SSHD"
+    echo "@include common-auth" > "$PAM_SSHD"
+    cat >> "$PAM_SSHD" <<EOF
+account include common-account
+password include common-password
+session include common-session
+session include common-session-noninteractive
+EOF
+    _remove_conf "AuthenticationMethods"
+    _update_conf "ChallengeResponseAuthentication" "no"
+}
+
 _setup_yubikey() {
     while true; do
         clear
@@ -194,16 +214,8 @@ EOF
                 return # 操作成功后直接返回主菜单
                 ;;
             3)
-                _backup_file "$PAM_SSHD"
-                echo "@include common-auth" > "$PAM_SSHD"
-                cat >> "$PAM_SSHD" <<EOF
-account include common-account
-password include common-password
-session include common-session
-session include common-session-noninteractive
-EOF
-                _remove_conf "AuthenticationMethods"
-                _update_conf "ChallengeResponseAuthentication" "no"
+                # 调用统一的禁用逻辑
+                _disable_yubi_internal
                 echo -e "${GREEN}[OK] YubiKey 已禁用${RESET}"; _restart_ssh; _flash_msg
                 return # 操作成功后直接返回主菜单
                 ;;
@@ -226,7 +238,10 @@ _presets_menu() {
         
         if [[ "$p" =~ ^[1-3]$ ]]; then
             _backup_file "$SSH_CONFIG"
-            _remove_conf "AuthenticationMethods" 
+            
+            # [关键修改] 应用预设前，强制禁用 YubiKey 相关设置
+            _disable_yubi_internal
+
             case $p in
                 1) _update_conf "PermitRootLogin" "no"; _update_conf "PasswordAuthentication" "no"; _update_conf "PubkeyAuthentication" "yes" ;;
                 2) _update_conf "PermitRootLogin" "prohibit-password"; _update_conf "PasswordAuthentication" "yes"; _update_conf "PubkeyAuthentication" "yes" ;;
