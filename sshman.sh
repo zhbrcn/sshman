@@ -107,9 +107,9 @@ _read_choice() {
     local prompt="$1" back_hint="$2" hint_suffix="" choice
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
-    printf "%s%s: " "$prompt" "$hint_suffix"
+    printf "%s%s: " "$prompt" "$hint_suffix" >&2
     if ! IFS= read -r choice; then
-        echo
+        printf "\n" >&2
         return 1
     fi
     choice=${choice//$'\r'/}
@@ -117,14 +117,14 @@ _read_choice() {
     choice="${choice#"${choice%%[![:space:]]*}"}"
     choice="${choice%"${choice##*[![:space:]]}"}"
     if [[ -z "$choice" || "$choice" == $'\e' ]]; then
-        echo
+        printf "\n" >&2
         return 1
     fi
     if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-        echo
+        printf "\n" >&2
         return 1
     fi
-    echo
+    printf "\n" >&2
     echo "$choice"
 }
 
