@@ -2,7 +2,8 @@
 # sshman - SSH 登录管理器 (UTF-8)
 # 请在 UTF-8 终端运行；提供交互式菜单管理 sshd 配置。
 
-set -euo pipefail
+# 不使用 -e，避免某些命令失败时直接退出主循环
+set -uo pipefail
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
