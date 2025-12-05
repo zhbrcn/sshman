@@ -104,22 +104,43 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" choice
+    local prompt="$1" back_hint="$2" hint_suffix="" choice rest
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
-    if ! IFS= read -r choice; then
+
+    # 读取首个按键；支持 Esc 直接返回，无需回车
+    if ! IFS= read -rs -n1 choice; then
         printf "\n" >&2
         return 1
     fi
+
+    # 按 Esc 返回上一层
+    if [[ "$choice" == $'\e' ]]; then
+        # 丢弃后续残留输入（如终端可能附带的 [ 字符）
+        while IFS= read -rs -n1 -t 0.01 rest 2>/dev/null; do
+            [[ "$rest" == $'\n' ]] && break
+        done
+        printf "\n" >&2
+        return 1
+    fi
+
+    # 用户直接回车视为返回
+    if [[ -z "$choice" || "$choice" == $'\n' ]]; then
+        printf "\n" >&2
+        return 1
+    fi
+
+    # 继续读取本行剩余输入（支持多字符），直到回车
+    while IFS= read -rs -n1 -t 0.1 rest 2>/dev/null; do
+        [[ "$rest" == $'\n' ]] && break
+        choice+="$rest"
+    done
+
     choice=${choice//$'\r'/}
     choice=${choice//$'\n'/}
     choice="${choice#"${choice%%[![:space:]]*}"}"
     choice="${choice%"${choice##*[![:space:]]}"}"
-    if [[ -z "$choice" || "$choice" == $'\e' ]]; then
-        printf "\n" >&2
-        return 1
-    fi
     if [[ -n "$back_hint" && "$choice" == "0" ]]; then
         printf "\n" >&2
         return 1
