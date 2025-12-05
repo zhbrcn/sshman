@@ -108,76 +108,42 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" key choice=""
+    local prompt="$1" back_hint="$2" hint_suffix="" first choice
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
-    while true; do
-        if ! IFS= read -rs -n1 key 2>/dev/null; then
+    if ! IFS= read -rs -n1 first 2>/dev/null; then
+        printf "\n" >&2
+        echo ""
+        return 0
+    fi
+
+    case "$first" in
+        $'\e'|$'\n'|$'\r'|$'\177'|$'\b')
             printf "\n" >&2
             echo ""
             return 0
-        fi
+            ;;
+    esac
 
-        # Esc 直接返回
-        if [[ "$key" == $'\e' ]]; then
-            printf "\n" >&2
-            echo ""
-            return 0
-        fi
+    # 使用 readline 支持回车/退格/左右编辑；初始值为首字符
+    READLINE_LINE="$first" READLINE_POINT=${#first}
+    if ! read -r -e -p "" choice; then
+        printf "\n" >&2
+        echo ""
+        return 0
+    fi
 
-        # 回车直接返回
-        if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
-            printf "\n" >&2
-            echo ""
-            return 0
-        fi
-
-        # 退格（支持 DEL 和 BS）
-        if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
-            if [[ -n "$choice" ]]; then
-                choice=${choice::-1}
-                printf '\b \b' >&2
-            fi
-            continue
-        fi
-
-        # 普通字符
-        choice+="$key"
-        printf "%s" "$key" >&2
-
-        # 继续读这一行，直到回车或 Esc
-        while IFS= read -rs -n1 key 2>/dev/null; do
-            if [[ "$key" == $'\e' ]]; then
-                printf "\n" >&2
-                echo ""
-                return 0
-            fi
-            if [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
-                printf "\n" >&2
-                choice=${choice//$'\r'/}
-                choice=${choice//$'\n'/}
-                choice="${choice#"${choice%%[![:space:]]*}"}"
-                choice="${choice%"${choice##*[![:space:]]}"}"
-                if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-                    echo ""
-                    return 0
-                fi
-                echo "$choice"
-                return 0
-            fi
-            if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
-                if [[ -n "$choice" ]]; then
-                    choice=${choice::-1}
-                    printf '\b \b' >&2
-                fi
-                continue
-            fi
-            choice+="$key"
-            printf "%s" "$key" >&2
-        done
-    done
+    choice=${choice//$'\r'/}
+    choice=${choice//$'\n'/}
+    choice="${choice#"${choice%%[![:space:]]*}"}"
+    choice="${choice%"${choice##*[![:space:]]}"}"
+    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
+        echo ""
+        return 0
+    fi
+    echo "$choice"
 }
 
 _status_colors() {
@@ -260,7 +226,7 @@ _render_menu() {
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf " %-4s %-20s %b\n" "$1" "$2" "$3"
+        printf " %-4s %-22s %b\n" "$1" "$2" "$3"
     }
 
     clear
