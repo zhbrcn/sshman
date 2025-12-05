@@ -398,8 +398,9 @@ PAMCFG
 
 _choose_yubikey_mode() {
     _section_header "YubiKey 模式" "当前：$(_status_yubikey_mode)"
-    echo "1) 仅 YubiKey OTP（禁用密码）"
-    echo "2) YubiKey + 密码 (2FA)"
+    echo "1) 禁用 YubiKey"
+    echo "2) 仅 YubiKey OTP（禁用密码）"
+    echo "3) YubiKey + 密码 (2FA)"
     echo "0) 取消"
     local m
     m=$(_read_choice "请选择" "Esc/0 返回")
@@ -409,8 +410,9 @@ _choose_yubikey_mode() {
     fi
 
     case $m in
-        1) _enable_yubikey_mode otp ;;
-        2) _enable_yubikey_mode pass ;;
+        1) _disable_yubikey ;;
+        2) _enable_yubikey_mode otp ;;
+        3) _enable_yubikey_mode pass ;;
         0) PAUSE_FLAG=0; return ;;
         *) echo "无效选项" ;;
     esac
