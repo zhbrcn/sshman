@@ -1,6 +1,6 @@
 #!/bin/bash
-# sshman - SSH 登录管理脚本 (UTF-8)
-# 在 UTF-8 终端运行，提供交互式菜单管理 sshd 配置。
+# sshman - SSH login manager (UTF-8)
+# Run in a UTF-8 terminal; provides an interactive menu to manage sshd settings.
 
 set -euo pipefail
 
@@ -33,11 +33,11 @@ _backup_file() {
 }
 
 _restart_ssh() {
-    echo "[*] 正在重启 SSH 服务..."
+    echo "[*] Restarting SSH service..."
     if systemctl restart "$SSH_SERVICE"; then
-        echo "[✔] SSH 重启成功"
+        echo "[OK] SSH restarted successfully"
     else
-        echo "[!] SSH 重启失败，请手动检查。"
+        echo "[!] SSH restart failed; please check manually."
     fi
 }
 
@@ -47,9 +47,9 @@ _check_utf8_locale() {
     lang_val="${LANG:-}"
     lc_ctype="${LC_CTYPE:-}"
     if [[ "$charmap" != "UTF-8" && "$lang_val" != *"UTF-8"* && "$lc_ctype" != *"UTF-8"* ]]; then
-        echo "[!] 当前终端编码为 ${charmap:-未知}，菜单需要 UTF-8 才能正常显示。"
-        echo "    建议先运行: export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
-        read -rp "可能出现乱码，按 Enter 继续或 Ctrl+C 终止..." _
+        echo "[!] Terminal encoding is ${charmap:-unknown}; the menu needs UTF-8 to render correctly."
+        echo "    Suggested: export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
+        read -rp "Press Enter to continue anyway (may see garbled text) or Ctrl+C to abort..." _
     fi
 }
 
@@ -80,26 +80,26 @@ _get_directive() {
 
 _format_on_off() {
     case $1 in
-        yes) echo "已开启" ;;
-        no) echo "已关闭" ;;
+        yes) echo "Enabled" ;;
+        no) echo "Disabled" ;;
         *) echo "$1" ;;
     esac
 }
 
 _format_root_login() {
     case $1 in
-        yes) echo "root 登录: 允许" ;;
-        prohibit-password) echo "root 登录: 仅密钥" ;;
-        no) echo "root 登录: 禁止" ;;
-        *) echo "root 登录: 未设置" ;;
+        yes) echo "Root login: allowed" ;;
+        prohibit-password) echo "Root login: key only" ;;
+        no) echo "Root login: disallowed" ;;
+        *) echo "Root login: unset" ;;
     esac
 }
 
 _format_auth_methods() {
     case $1 in
-        "keyboard-interactive") echo "认证方式: 键盘交互 (YubiKey)" ;;
-        默认) echo "认证方式: 默认" ;;
-        *) echo "认证方式: $1" ;;
+        "keyboard-interactive") echo "Auth method: keyboard-interactive (YubiKey)" ;;
+        default) echo "Auth method: default" ;;
+        *) echo "Auth method: $1" ;;
     esac
 }
 
@@ -149,18 +149,18 @@ _section_header() {
 }
 
 _status_root_login() {
-    _format_root_login "$(_get_directive PermitRootLogin 未设置)"
+    _format_root_login "$(_get_directive PermitRootLogin unset)"
 }
 
-_status_password_login() { _format_on_off "$(_get_directive PasswordAuthentication 未设置)"; }
-_status_pubkey_login() { _format_on_off "$(_get_directive PubkeyAuthentication 未设置)"; }
+_status_password_login() { _format_on_off "$(_get_directive PasswordAuthentication unset)"; }
+_status_pubkey_login() { _format_on_off "$(_get_directive PubkeyAuthentication unset)"; }
 
 _status_auth_methods() {
-    local authm=$(_get_directive AuthenticationMethods 默认)
-    if [[ "$authm" == "默认" ]]; then
-        echo "默认"
+    local authm=$(_get_directive AuthenticationMethods default)
+    if [[ "$authm" == "default" ]]; then
+        echo "default"
     elif [[ "$authm" == "keyboard-interactive" ]]; then
-        echo "键盘交互"
+        echo "keyboard-interactive"
     else
         echo "$authm"
     fi
@@ -168,13 +168,13 @@ _status_auth_methods() {
 
 _status_yubikey_mode() {
     if ! grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
-        echo "未启用"
+        echo "Disabled"
         return
     fi
     if grep -q "^@include common-auth" "$PAM_SSHD"; then
-        echo "YubiKey + 密码"
+        echo "YubiKey + password"
     else
-        echo "仅 YubiKey"
+        echo "YubiKey only"
     fi
 }
 
@@ -182,9 +182,9 @@ _authorized_keys_label() {
     if [[ -f "$AUTHORIZED_KEYS" ]]; then
         local count
         count=$(wc -l < "$AUTHORIZED_KEYS")
-        echo "已存在 (${count} 条)"
+        echo "Present (${count} lines)"
     else
-        echo "未创建"
+        echo "Not created"
     fi
 }
 
@@ -197,13 +197,13 @@ _render_menu() {
     pubkey_status=$(_blue_text "$(_status_pubkey_login) / $auth_file_status")
     authm_status=$(_blue_text "$(_status_auth_methods)")
     yubi_mode=$(_status_yubikey_mode)
-    if [[ "$yubi_mode" == "未启用" ]]; then
-        yubi_switch_status="当前: 已禁用"
+    if [[ "$yubi_mode" == "Disabled" ]]; then
+        yubi_switch_status="Current: disabled"
     else
-        yubi_switch_status="当前: 已启用"
+        yubi_switch_status="Current: enabled"
     fi
     yubi_display=$(_blue_text "$yubi_mode / $yubi_switch_status")
-    sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
+    sys_info="OS: $(lsb_release -ds 2>/dev/null || echo Linux) | Service: $SSH_SERVICE"
 
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
@@ -213,43 +213,43 @@ _render_menu() {
 
     clear
     echo -e "${BLUE}${border}${RESET}"
-    printf " sshman - SSH 登录管理 (UTF-8)\n"
+    printf " sshman - SSH login manager (UTF-8)\n"
     printf " %b\n" "$(_blue_text "$sys_info")"
     echo -e "${BLUE}${divider}${RESET}"
-    menu_line "1)" "root 登录" "$root_status"
-    menu_line "2)" "密码登录" "$password_status"
-    menu_line "3)" "公钥登录与密钥" "$pubkey_status"
+    menu_line "1)" "Root login" "$root_status"
+    menu_line "2)" "Password login" "$password_status"
+    menu_line "3)" "Public key login & keys" "$pubkey_status"
     menu_line "4)" "YubiKey" "$yubi_display"
-    menu_line "5)" "推荐预设" "$authm_status"
+    menu_line "5)" "Recommended presets" "$authm_status"
     echo -e "${BLUE}${divider}${RESET}"
-    echo " 0) 退出 (Esc/0 返回)"
+    echo " 0) Exit (Esc/0 to go back)"
     echo -e "${BLUE}${border}${RESET}"
 }
 
 _set_root_login() {
-    _section_header "root 登录" "当前: $(_status_root_login)"
-    echo "1) 允许 root 登录"
-    echo "2) 仅允许 root 密钥"
-    echo "3) 禁止 root 登录"
+    _section_header "Root login" "Current: $(_status_root_login)"
+    echo "1) Allow root login"
+    echo "2) Allow root key only"
+    echo "3) Disable root login"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "Select" "Esc/0 to return") || return
 
     _backup_file "$SSH_CONFIG"
     case $a in
         1) _update_directive "PermitRootLogin" "yes" ;;
         2) _update_directive "PermitRootLogin" "prohibit-password" ;;
         3) _update_directive "PermitRootLogin" "no" ;;
-        *) echo "无效选择" ; return ;;
+        *) echo "Invalid choice" ; return ;;
     esac
     _restart_ssh
 }
 
 _set_password_login() {
-    _section_header "密码登录" "当前: $(_status_password_login)"
-    echo "1) 启用密码登录"
-    echo "2) 禁用密码登录"
+    _section_header "Password login" "Current: $(_status_password_login)"
+    echo "1) Enable password login"
+    echo "2) Disable password login"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "Select" "Esc/0 to return") || return
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -261,11 +261,11 @@ _set_password_login() {
 }
 
 _set_pubkey_login() {
-    _section_header "公钥登录" "当前: $(_status_pubkey_login)"
-    echo "1) 启用公钥登录"
-    echo "2) 禁用公钥登录"
+    _section_header "Public key login" "Current: $(_status_pubkey_login)"
+    echo "1) Enable public key login"
+    echo "2) Disable public key login"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "Select" "Esc/0 to return") || return
 
     _backup_file "$SSH_CONFIG"
     if [[ "$a" == "1" ]]; then
@@ -280,79 +280,79 @@ _manage_keys() {
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
 
-    _section_header "authorized_keys" "状态: $(_authorized_keys_label)"
-    echo "1) 查看密钥"
-    echo "2) 手动追加公钥"
-    echo "3) 从文件导入公钥 (例如 ~/.ssh/id_rsa.pub)"
-    echo "4) 删除指定行的公钥"
+    _section_header "authorized_keys" "Status: $(_authorized_keys_label)"
+    echo "1) View keys"
+    echo "2) Append a public key manually"
+    echo "3) Import from file (e.g. ~/.ssh/id_rsa.pub)"
+    echo "4) Delete a public key by line number"
     local a
-    a=$(_read_choice "请选择" "Esc/0 返回") || return
+    a=$(_read_choice "Select" "Esc/0 to return") || return
 
     case $a in
         1)
             if [[ -f "$AUTHORIZED_KEYS" ]]; then
                 nl -ba "$AUTHORIZED_KEYS"
             else
-                echo "尚未创建 authorized_keys"
+                echo "authorized_keys not created yet"
             fi
             ;;
         2)
-            read -rp "请输入公钥: " key
+            read -rp "Enter public key: " key
             echo "$key" >> "$AUTHORIZED_KEYS"
             chmod 600 "$AUTHORIZED_KEYS"
-            echo "[✔] 公钥已添加"
+            echo "[OK] Public key added"
             ;;
         3)
-            read -rp "请输入公钥文件路径 (默认: $HOME/.ssh/id_rsa.pub): " path
+            read -rp "Path to public key file (default: $HOME/.ssh/id_rsa.pub): " path
             path=${path:-$HOME/.ssh/id_rsa.pub}
             if [[ -f "$path" ]]; then
                 cat "$path" >> "$AUTHORIZED_KEYS"
                 chmod 600 "$AUTHORIZED_KEYS"
-                echo "[✔] 已导入 $path"
+                echo "[OK] Imported $path"
             else
-                echo "未找到文件: $path"
+                echo "File not found: $path"
             fi
             ;;
         4)
             if [[ ! -f "$AUTHORIZED_KEYS" ]]; then
-                echo "尚未创建 authorized_keys"; return
+                echo "authorized_keys not created"; return
             fi
             local -a numbered_lines=()
             mapfile -t numbered_lines < <(nl -ba "$AUTHORIZED_KEYS")
             if [[ ${#numbered_lines[@]} -eq 0 ]]; then
-                echo "authorized_keys 为空，无需删除"; return
+                echo "authorized_keys is empty; nothing to delete"; return
             fi
             printf "%s\n" "${numbered_lines[@]}"
             local line max_line
             max_line=$(printf '%s\n' "${numbered_lines[@]}" | tail -n1 | awk '{print $1}')
-            read -rp "输入要删除的行号: " line
+            read -rp "Enter line number to delete: " line
             if [[ ! "$line" =~ ^[0-9]+$ ]]; then
-                echo "行号必须为数字"; return
+                echo "Line number must be numeric"; return
             fi
             if [[ "$line" -lt 1 || "$line" -gt "$max_line" ]]; then
-                echo "行号超出范围 (1-${max_line})"; return
+                echo "Line number out of range (1-${max_line})"; return
             fi
             sed -i "${line}d" "$AUTHORIZED_KEYS"
-            echo "[✔] 已删除第 $line 行"
+            echo "[OK] Deleted line $line"
             ;;
-        *) echo "无效选择" ;;
+        *) echo "Invalid choice" ;;
     esac
 }
 
 _manage_pubkey_suite() {
     while true; do
-        _section_header "公钥登录/密钥" "登录: $(_status_pubkey_login) | 密钥: $(_authorized_keys_label)"
-        echo "1) 设置公钥登录开关"
-        echo "2) 管理 authorized_keys"
-        echo "0) 返回"
+        _section_header "Public key login / keys" "Login: $(_status_pubkey_login) | Keys: $(_authorized_keys_label)"
+        echo "1) Toggle public key login"
+        echo "2) Manage authorized_keys"
+        echo "0) Back"
         local a
-        a=$(_read_choice "请选择" "Esc/0 返回") || return
+        a=$(_read_choice "Select" "Esc/0 to return") || return
 
         case $a in
             1) _set_pubkey_login ;;
             2) _manage_keys ;;
             0) return ;;
-            *) echo "无效选择" ;;
+            *) echo "Invalid choice" ;;
         esac
         echo
     done
@@ -360,7 +360,7 @@ _manage_pubkey_suite() {
 
 _ensure_yubico_package() {
     if ! dpkg -s libpam-yubico >/dev/null 2>&1; then
-        echo "[*] 正在安装 libpam-yubico..."
+        echo "[*] Installing libpam-yubico..."
         apt-get update -y && apt-get install -y libpam-yubico
     fi
 }
@@ -375,7 +375,7 @@ _write_yubikey_authfile() {
 _write_pam_block() {
     local mode=$1
     cat > "$PAM_SSHD" <<'PAMCFG'
-# PAM 配置由 sshman 管理
+# PAM config managed by sshman
 auth    required                        pam_yubico.so id=${YUBI_CLIENT_ID} key=${YUBI_SECRET_KEY} authfile=${AUTHORIZED_YUBIKEYS} mode=clientless
 PAMCFG
 
@@ -397,48 +397,48 @@ _disable_yubikey() {
     local skip_restart=${1:-}
     _backup_file "$PAM_SSHD"
     cat > "$PAM_SSHD" <<'PAMCFG'
-# PAM 配置由 sshman 重置为默认
+# PAM config reset to defaults by sshman
 @include common-auth
 account include common-account
 password include common-password
 session include common-session
 session include common-session-noninteractive
 PAMCFG
-    echo "[✔] 已禁用 YubiKey 登录并恢复默认 PAM"
+    echo "[OK] Disabled YubiKey login and restored default PAM"
     _remove_directive "AuthenticationMethods"
     [[ "$skip_restart" == "skip" ]] || _restart_ssh
 }
 
 _choose_yubikey_mode() {
-    _section_header "YubiKey 模式" "当前: $(_status_yubikey_mode)"
-    echo "1) 仅使用 YubiKey OTP (关闭密码)"
-    echo "2) YubiKey + 密码 (双因素)"
-    echo "0) 取消"
+    _section_header "YubiKey mode" "Current: $(_status_yubikey_mode)"
+    echo "1) YubiKey OTP only (disable passwords)"
+    echo "2) YubiKey + password (2FA)"
+    echo "0) Cancel"
     local m
-    m=$(_read_choice "请选择" "Esc/0 返回") || return
+    m=$(_read_choice "Select" "Esc/0 to return") || return
 
     case $m in
         1) _enable_yubikey_mode otp ;;
         2) _enable_yubikey_mode pass ;;
         0) return ;;
-        *) echo "无效选择" ;;
+        *) echo "Invalid choice" ;;
     esac
 }
 
 _manage_yubikey() {
     while true; do
-        _section_header "YubiKey 管理" "状态: $(_status_yubikey_mode)"
-        echo "1) 配置/切换 YubiKey 模式"
-        echo "2) 禁用/恢复 YubiKey"
-        echo "0) 返回"
+        _section_header "YubiKey management" "Status: $(_status_yubikey_mode)"
+        echo "1) Configure / switch YubiKey mode"
+        echo "2) Disable / restore YubiKey"
+        echo "0) Back"
         local a
-        a=$(_read_choice "请选择" "Esc/0 返回") || return
+        a=$(_read_choice "Select" "Esc/0 to return") || return
 
         case $a in
             1) _choose_yubikey_mode ;;
             2) _disable_yubikey ;;
             0) return ;;
-            *) echo "无效选择" ;;
+            *) echo "Invalid choice" ;;
         esac
         echo
     done
@@ -458,25 +458,25 @@ _enable_yubikey_mode() {
     if [[ "$mode" == "otp" ]]; then
         _update_directive "PasswordAuthentication" "no"
         _update_directive "PubkeyAuthentication" "no"
-        echo "[✔] 已启用仅 YubiKey OTP 登录"
+        echo "[OK] Enabled YubiKey OTP only"
     else
         _update_directive "PasswordAuthentication" "yes"
         _update_directive "PubkeyAuthentication" "yes"
-        echo "[✔] 已启用 YubiKey + 密码双因素"
+        echo "[OK] Enabled YubiKey + password (2FA)"
     fi
     _restart_ssh
 }
 
 _apply_preset() {
-    local summary="root: $(_status_root_login) | 密码: $(_status_password_login) | 公钥: $(_status_pubkey_login) | YubiKey: $(_status_yubikey_mode)"
-    _section_header "推荐预设" "$summary"
-    echo "1) 安全生产：禁用 root 登录，禁用密码，启用公钥"
-    echo "2) 日常开发：允许 root 密钥，允许密码"
-    echo "3) 临时环境：root + 密码全部开启"
-    echo "4) 仅 YubiKey OTP（禁用密码/公钥）"
-    echo "5) YubiKey + 密码（保留公钥）"
+    local summary="root: $(_status_root_login) | password: $(_status_password_login) | pubkey: $(_status_pubkey_login) | YubiKey: $(_status_yubikey_mode)"
+    _section_header "Recommended presets" "$summary"
+    echo "1) Hardened production: disable root login, disable passwords, enable pubkey"
+    echo "2) Daily development: allow root key, allow passwords"
+    echo "3) Temporary/open: enable root + password"
+    echo "4) YubiKey OTP only (disable password/pubkey)"
+    echo "5) YubiKey + password (keep pubkey)"
     local p
-    p=$(_read_choice "请选择预设" "Esc/0 返回") || return
+    p=$(_read_choice "Select preset" "Esc/0 to return") || return
 
     case $p in
         1)
@@ -510,7 +510,7 @@ _apply_preset() {
             _enable_yubikey_mode pass
             return
             ;;
-        *) echo "无效预设" ; return ;;
+        *) echo "Invalid preset" ; return ;;
     esac
     _restart_ssh
 }
@@ -518,7 +518,7 @@ _apply_preset() {
 _check_utf8_locale
 while true; do
     _render_menu
-    c=$(_read_choice "请选择操作" "") || continue
+    c=$(_read_choice "Choose an action" "") || continue
     case $c in
         1) _set_root_login ;;
         2) _set_password_login ;;
@@ -526,8 +526,8 @@ while true; do
         4) _manage_yubikey ;;
         5) _apply_preset ;;
         0) exit 0 ;;
-        *) echo "无效选择" ;;
+        *) echo "Invalid choice" ;;
     esac
     echo
-    read -rp "按回车返回菜单..." _
+    read -rp "Press Enter to return to the menu..." _
 done
