@@ -108,44 +108,40 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" first rest choice
+    local prompt="$1" back_hint="$2" hint_suffix="" key choice=""
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
-    # 先读首个按键，便于快速处理 Esc/回车
-    if ! IFS= read -rs -n1 first 2>/dev/null; then
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
-
-    case "$first" in
-        $'\e'|$'\n'|$'\r'|$'\177'|$'\b')
+    while IFS= read -rs -n1 key 2>/dev/null; do
+        # Esc 或回车直接返回
+        if [[ "$key" == $'\e' || "$key" == $'\n' || "$key" == $'\r' ]]; then
             printf "\n" >&2
-            echo ""
+            if [[ -z "$choice" || ( -n "$back_hint" && "$choice" == "0" ) ]]; then
+                echo ""
+                return 0
+            fi
+            echo "$choice"
             return 0
-            ;;
-    esac
+        fi
 
-    # 将首字符作为初始值供 readline 编辑（不额外打印，避免重复显示）
-    READLINE_LINE="$first" READLINE_POINT=${#first}
-    if ! IFS= read -er -p "" rest; then
-        printf "\n" >&2
-        echo ""
-        return 0
-    fi
+        # 退格
+        if [[ "$key" == $'\177' || "$key" == $'\b' ]]; then
+            if [[ -n "$choice" ]]; then
+                choice=${choice::-1}
+                printf '\b \b' >&2
+            fi
+            continue
+        fi
 
-    choice="$rest"
-    choice=${choice//$'\r'/}
-    choice=${choice//$'\n'/}
-    choice="${choice#"${choice%%[![:space:]]*}"}"
-    choice="${choice%"${choice##*[![:space:]]}"}"
-    if [[ -n "$back_hint" && "$choice" == "0" ]]; then
-        echo ""
-        return 0
-    fi
-    echo "$choice"
+        # 普通字符
+        choice+="$key"
+        printf "%s" "$key" >&2
+    done
+
+    printf "\n" >&2
+    echo ""
+    return 0
 }
 
 _status_colors() {
