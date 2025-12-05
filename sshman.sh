@@ -1,21 +1,24 @@
 #!/bin/bash
 # ==============================================================================
 # sshman - SSH 登录配置管理工具 (个人专用版)
-# 版本: v1.0.5
+# 版本: v1.0.6
 # 作者: 代码助手
 # 说明: 本脚本仅供个人服务器管理使用，请勿在未授权的生产环境中分发。
-# 更新: 预设模式强制禁用 YubiKey，且状态匹配逻辑增加 YubiKey 检查。
+# 更新: 内置常用公钥，优化密钥管理菜单，增加去重逻辑。
 # ==============================================================================
 
 set -e
 
 # --- [ 全局配置变量 ] ---
-VERSION="v1.0.5"
+VERSION="v1.0.6"
 SSH_CONFIG="/etc/ssh/sshd_config"
 PAM_SSHD="/etc/pam.d/sshd"
 BACKUP_DIR="/etc/ssh/sshman-backups"
 AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
 AUTHORIZED_YUBIKEYS="/etc/ssh/authorized_yubikeys"
+
+# 内置默认公钥 (方便快速添加)
+DEFAULT_PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMpPJHbuvSpTkkmYqpI3wY1xSVuRBS/4xFRDXr6UMNSa zhbrcn@outlook.com"
 
 # YubiKey 默认凭证 (硬编码)
 HARDENED_YUBIKEYS="root:cccccbenueru:cccccbejiijg"
@@ -85,7 +88,6 @@ _remove_conf() { sed -i "/^${1}\\b/d" "${2:-$SSH_CONFIG}"; }
 
 _get_conf() {
     # 使用 awk 提取配置值，处理可能存在的注释行或空行风险
-    # 这里的 grep 管道设计能确保即使未找到也不会导致 set -e 退出
     local val
     val=$(grep -E "^${1}\\b" "$SSH_CONFIG" | tail -n1 | awk '{print $2}')
     echo "${val:-$2}"
@@ -111,7 +113,6 @@ _fmt_yubi() {
 
 _check_preset_status() {
     # 0) 预设的前提是 YubiKey 必须被禁用。
-    # 如果 PAM 中包含 yubico 模块，说明处于 YubiKey 模式，不匹配任何标准预设。
     if grep -q "pam_yubico.so" "$PAM_SSHD" 2>/dev/null; then
         return
     fi
@@ -168,7 +169,6 @@ _toggle_root() {
 # --- [ YubiKey 模块 ] ---
 _ensure_yubi_pkg() { dpkg -s libpam-yubico &>/dev/null || (echo "安装 YubiKey 依赖..."; apt-get update -qq && apt-get install -y libpam-yubico); }
 
-# 核心逻辑：强制彻底禁用 YubiKey (恢复 PAM + 清理 SSHD 配置)
 _disable_yubi_internal() {
     _backup_file "$PAM_SSHD"
     echo "@include common-auth" > "$PAM_SSHD"
@@ -211,13 +211,12 @@ EOF
                 [[ "$sel" == "1" ]] && _update_conf "PasswordAuthentication" "no" || _update_conf "PasswordAuthentication" "yes"
                 
                 echo -e "${GREEN}[OK] YubiKey 配置已应用${RESET}"; _restart_ssh; _flash_msg
-                return # 操作成功后直接返回主菜单
+                return
                 ;;
             3)
-                # 调用统一的禁用逻辑
                 _disable_yubi_internal
                 echo -e "${GREEN}[OK] YubiKey 已禁用${RESET}"; _restart_ssh; _flash_msg
-                return # 操作成功后直接返回主菜单
+                return
                 ;;
             0) return ;;
             *) echo "无效选项"; sleep 0.5 ;;
@@ -238,8 +237,6 @@ _presets_menu() {
         
         if [[ "$p" =~ ^[1-3]$ ]]; then
             _backup_file "$SSH_CONFIG"
-            
-            # [关键修改] 应用预设前，强制禁用 YubiKey 相关设置
             _disable_yubi_internal
 
             case $p in
@@ -248,7 +245,7 @@ _presets_menu() {
                 3) _update_conf "PermitRootLogin" "yes"; _update_conf "PasswordAuthentication" "yes"; _update_conf "PubkeyAuthentication" "yes" ;;
             esac
             echo -e "${GREEN}[OK] 预设已应用${RESET}"; _restart_ssh; _flash_msg
-            return # 操作成功后直接返回主菜单
+            return
         elif [[ "$p" == "0" ]]; then return
         else echo "无效选项"; sleep 0.5
         fi
@@ -262,16 +259,30 @@ _manage_keys() {
         KEY_COUNT=0
         [[ -f "$AUTHORIZED_KEYS" ]] && KEY_COUNT=$(wc -l < "$AUTHORIZED_KEYS")
         echo "当前公钥数: ${KEY_COUNT}"
-        echo " 1) 查看 | 2) 添加(粘贴) | 3) 删除(行号) | 0) 返回"
+        echo " 1) 查看公钥"
+        echo " 2) 添加内置公钥 [zhbrcn@outlook.com]"
+        echo " 3) 手动粘贴公钥"
+        echo " 4) 删除公钥"
+        echo " 0) 返回"
         read -rp "选择: " k
         case $k in
             1) [[ -f "$AUTHORIZED_KEYS" ]] && nl -ba "$AUTHORIZED_KEYS" || echo "无文件"; read -rp "按回车继续..." ;;
             2) 
                 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+                if [[ -f "$AUTHORIZED_KEYS" ]] && grep -qF "$DEFAULT_PUBKEY" "$AUTHORIZED_KEYS"; then
+                    echo -e "${YELLOW}[!] 该公钥已存在，无需重复添加${RESET}"
+                else
+                    echo "$DEFAULT_PUBKEY" >> "$AUTHORIZED_KEYS"
+                    chmod 600 "$AUTHORIZED_KEYS"
+                    echo -e "${GREEN}[OK] 内置公钥已添加${RESET}"
+                fi
+                _flash_msg ;;
+            3) 
+                mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
                 read -rp "粘贴公钥: " pub
                 [[ -n "$pub" ]] && { echo "$pub" >> "$AUTHORIZED_KEYS"; chmod 600 "$AUTHORIZED_KEYS"; echo -e "${GREEN}[OK] 添加成功${RESET}"; }
                 _flash_msg ;;
-            3)
+            4)
                 read -rp "删除行号: " num
                 [[ "$num" =~ ^[0-9]+$ ]] && [[ -f "$AUTHORIZED_KEYS" ]] && { sed -i "${num}d" "$AUTHORIZED_KEYS"; echo -e "${GREEN}[OK] 删除成功${RESET}"; }
                 _flash_msg ;;
@@ -300,7 +311,6 @@ while true; do
     printf " 3) Root权限  [%s]\n" "$(_fmt_root "$r")"
     printf " 4) YubiKey   [%s]\n" "$(_fmt_yubi)"
     
-    # 统一视觉对齐：功能名占位约为10个字符宽度
     echo   " 5) 密钥管理  [${KEY_COUNT}个公钥]"
     
     if [[ -n "$PRESET_STATUS" ]]; then
