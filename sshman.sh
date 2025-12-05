@@ -108,11 +108,12 @@ _format_auth_methods() {
 }
 
 _read_choice() {
-    local prompt="$1" back_hint="$2" hint_suffix="" first choice
+    local prompt="$1" back_hint="$2" hint_suffix="" first rest choice
 
     [[ -n "$back_hint" ]] && hint_suffix=" (${back_hint})"
     printf "%s%s: " "$prompt" "$hint_suffix" >&2
 
+    # 先读首个按键，便于快速处理 Esc/回车
     if ! IFS= read -rs -n1 first 2>/dev/null; then
         printf "\n" >&2
         echo ""
@@ -127,14 +128,15 @@ _read_choice() {
             ;;
     esac
 
-    # 使用 readline 支持回车/退格/左右编辑；初始值为首字符
-    READLINE_LINE="$first" READLINE_POINT=${#first}
-    if ! read -r -e -p "" choice; then
+    # 显示已输入字符，并将其作为初始值供 readline 编辑
+    printf "%s" "$first" >&2
+    if ! IFS= read -er -p "" -i "$first" rest; then
         printf "\n" >&2
         echo ""
         return 0
     fi
 
+    choice="$rest"
     choice=${choice//$'\r'/}
     choice=${choice//$'\n'/}
     choice="${choice#"${choice%%[![:space:]]*}"}"
