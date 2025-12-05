@@ -42,9 +42,11 @@ _restart_ssh() {
 }
 
 _check_utf8_locale() {
-    local charmap
+    local charmap lang_val lc_ctype
     charmap=$(locale charmap 2>/dev/null || echo "")
-    if [[ "$charmap" != "UTF-8" && "$LANG" != *"UTF-8"* && "$LC_CTYPE" != *"UTF-8"* ]]; then
+    lang_val="${LANG:-}"
+    lc_ctype="${LC_CTYPE:-}"
+    if [[ "$charmap" != "UTF-8" && "$lang_val" != *"UTF-8"* && "$lc_ctype" != *"UTF-8"* ]]; then
         echo "[!] 当前终端编码为 ${charmap:-未知}，菜单需要 UTF-8 才能正常显示。"
         echo "    建议先运行: export LANG=en_US.UTF-8; export LC_ALL=en_US.UTF-8"
         read -rp "可能出现乱码，按 Enter 继续或 Ctrl+C 终止..." _
