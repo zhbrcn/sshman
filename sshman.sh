@@ -125,7 +125,7 @@ _read_choice() {
         echo ""
         return 0
     fi
-    if [[ "$choice" == $'\e' || "$choice" == $'\e'* ]]; then
+    if [[ "$choice" == $'\e' || "$choice" == $'\e'* || "$choice" == *$'\e'* ]]; then
         echo ""
         return 0
     fi
@@ -199,24 +199,24 @@ _authorized_keys_label() {
 _render_menu() {
     _status_colors
     local root_status password_status pubkey_status authm_status yubi_mode auth_file_status yubi_switch_status yubi_display sys_info
-    root_status=$(_blue_text "$(_status_root_login)")
-    password_status=$(_blue_text "$(_status_password_login)")
-    pubkey_status=$(_blue_text "$(_status_pubkey_login)")
-    auth_file_status=$(_blue_text "$(_authorized_keys_label)")
-    authm_status=$(_blue_text "$(_status_auth_methods)")
+    root_status="$(_status_root_login)"
+    password_status="$(_status_password_login)"
+    pubkey_status="$(_status_pubkey_login)"
+    auth_file_status="$(_authorized_keys_label)"
+    authm_status="$(_status_auth_methods)"
     yubi_mode=$(_status_yubikey_mode)
     if [[ "$yubi_mode" == "未启用" ]]; then
         yubi_switch_status="当前：已禁用"
     else
         yubi_switch_status="当前：已启用"
     fi
-    yubi_display=$(_blue_text "$yubi_mode / $yubi_switch_status")
+    yubi_display="$yubi_mode / $yubi_switch_status"
     sys_info="系统: $(lsb_release -ds 2>/dev/null || echo Linux) | 服务: $SSH_SERVICE"
 
     local border=$(printf '%*s' 68 "" | tr ' ' '=')
     local divider=$(printf '%*s' 68 "" | tr ' ' '-')
     menu_line() {
-        printf " %-4s %-24s %b\n" "$1" "$2" "$3"
+        printf " %-4s %-24s %s\n" "$1" "$2" "$3"
     }
 
     clear
