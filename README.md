@@ -1,4 +1,4 @@
-# sshman - Personal boot scripts
+# boot-scripts - Personal boot scripts
 
 此仓库用于个人开机启动脚本集合。每个功能独立为一个 `.sh`，统一入口脚本用于批量执行，也可单独运行。
 
@@ -40,18 +40,18 @@ sudo systemctl enable --now boot-scripts.service
 
 **Direct Download (raw)**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhbrcn/sshman/main/scripts/sshman.sh -o sshman.sh \
+curl -fsSL https://raw.githubusercontent.com/zhbrcn/boot-scripts/main/scripts/sshman.sh -o sshman.sh \
   && chmod +x sshman.sh \
   && sudo ./sshman.sh
 ```
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhbrcn/sshman/main/scripts/fix-time.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zhbrcn/boot-scripts/main/scripts/fix-time.sh | sudo bash
 ```
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhbrcn/sshman/main/scripts/fix-time.sh | sudo bash -s -- --install-service
+curl -fsSL https://raw.githubusercontent.com/zhbrcn/boot-scripts/main/scripts/fix-time.sh | sudo bash -s -- --install-service
 ```
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhbrcn/sshman/main/scripts/fix-time.sh -o /tmp/fix-time.sh \
+curl -fsSL https://raw.githubusercontent.com/zhbrcn/boot-scripts/main/scripts/fix-time.sh -o /tmp/fix-time.sh \
   && sed -n '1,200p' /tmp/fix-time.sh \
   && sudo bash /tmp/fix-time.sh --install-service
 ```
